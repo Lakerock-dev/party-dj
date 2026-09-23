@@ -1,0 +1,2194 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>🎛️ Party DJ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; }
+    body { min-height: 100%; background: #080808; color: #fff; -webkit-font-smoothing: antialiased; }
+    #root { min-height: 100vh; }
+    input[type="range"] { cursor: pointer; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .dj-container { max-width:640px; margin:0 auto; padding:18px 16px 40px; display:flex; flex-direction:column; gap:14px; }
+    .dj-top-row { display:flex; flex-direction:column; gap:14px; }
+    .dj-top-row > div { width:100%; }
+    @media (min-width: 820px) {
+      .dj-container { max-width:920px; }
+      .dj-top-row { flex-direction:row; align-items:stretch; }
+      .dj-top-row > div { flex:1; min-width:0; }
+    }
+    @keyframes gst-eq { 0%,100%{height:4px} 50%{height:13px} }
+    .gst-bar { width:3px; background:currentColor; border-radius:1px; animation:gst-eq 0.9s ease-in-out infinite; display:inline-block; }
+    @keyframes gst-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .gst-live-dot { animation:gst-pulse 1.4s ease-in-out infinite; }
+    .gst-display { font-family:'Bebas Neue', system-ui, sans-serif; letter-spacing:0.04em; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#080808;color:#555;font-family:system-ui">
+      <div style="text-align:center">
+        <div style="font-size:52px;margin-bottom:16px">🎛️</div>
+        <div style="font-family:monospace;font-size:13px">App wird geladen…</div>
+        <div style="font-family:monospace;font-size:11px;margin-top:8px;color:#333">JSX wird kompiliert</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="text/babel" data-presets="react,env">
+    const { useState, useEffect, useRef } = React;
+
+
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+const PHASES = [
+  { id:"warmup",    name:"Warm-up",   emoji:"🌅", color:"#FFAD60", glow:"#FFAD6033", bg:"#1a1000",
+    bpmMin:75,  bpmMax:108, energy:[0.2,0.5],  valence:[0.4,0.75],
+    genres:["chill","acoustic","indie-pop","lo-fi-beats"],
+    desc:"Ankommen & einstimmen", tip:"Ruhige Vibes – die ersten Gäste trudeln ein" },
+  { id:"buildup",   name:"Build-up",  emoji:"🔥", color:"#FF6B6B", glow:"#FF6B6B33", bg:"#1a0808",
+    bpmMin:105, bpmMax:122, energy:[0.5,0.72], valence:[0.55,0.88],
+    genres:["pop","funk","disco","nu-disco"],
+    desc:"Energie steigt an", tip:"Dancefloor füllt sich – Tempo anziehen" },
+  { id:"peak",      name:"Peak-Time", emoji:"⚡", color:"#A29BFE", glow:"#A29BFE33", bg:"#0d0a1e",
+    bpmMin:122, bpmMax:140, energy:[0.75,1.0], valence:[0.6,1.0],
+    genres:["house","techno","edm","electronic"],
+    desc:"Volle Energie – alle tanzen", tip:"Maximale Energie – das ist die Stunde" },
+  { id:"cooldown",  name:"Cool-Down", emoji:"🌙", color:"#74B9FF", glow:"#74B9FF33", bg:"#00101a",
+    bpmMin:85,  bpmMax:112, energy:[0.3,0.62], valence:[0.4,0.72],
+    genres:["rnb","soul","pop","indie"],
+    desc:"Sanfter Übergang", tip:"Gäste kühlen ab – R&B und Slow Jams" },
+  { id:"afterhour", name:"Afterhour", emoji:"🌃", color:"#55EFC4", glow:"#55EFC433", bg:"#001a12",
+    bpmMin:65,  bpmMax:92,  energy:[0.1,0.4],  valence:[0.25,0.6],
+    genres:["ambient","jazz","lo-fi-beats","deep-house"],
+    desc:"Die letzten Nachtschwärmer", tip:"Gedimmtes Licht, tiefer Groove" },
+];
+
+const SCOPES = [
+  "user-read-playback-state",
+  "user-modify-playback-state",
+  "user-read-currently-playing",
+  "streaming",
+].join(" ");
+
+
+// ═══════════════════════════════════════════════════════════════
+// STORAGE: window.storage (Claude Artifact) nicht verfügbar in standalone HTML
+// Gäste-Echtzeit-Sync läuft über Firebase Realtime Database (Schritt ④ im Setup)
+// ═══════════════════════════════════════════════════════════════
+const store = {
+  async set() { return null; },
+  async get() { return null; },
+  async list() { return { keys: [] }; },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// PKCE HELPERS
+// ═══════════════════════════════════════════════════════════════
+const randStr = n => {
+  const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  return [...crypto.getRandomValues(new Uint8Array(n))].map(x => a[x % a.length]).join("");
+};
+async function codeChallenge(v) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v));
+  return btoa(String.fromCharCode(...new Uint8Array(d))).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SPOTIFY API WRAPPER
+// ═══════════════════════════════════════════════════════════════
+const sp = token => ({
+  async get(path) {
+    const r = await fetch(`https://api.spotify.com/v1${path}`, { headers: { Authorization:`Bearer ${token}` } });
+    if (r.status === 204) return null;
+    const d = await r.json();
+    if (!r.ok) throw Object.assign(new Error(d?.error?.message || r.status), { status: r.status });
+    return d;
+  },
+  async put(path, body) {
+    return fetch(`https://api.spotify.com/v1${path}`, {
+      method:"PUT", headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
+      body: body != null ? JSON.stringify(body) : undefined,
+    });
+  },
+  async post(path, body) {
+    const r = await fetch(`https://api.spotify.com/v1${path}`, {
+      method:"POST", headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
+      body: body != null ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 204 || r.status === 200) return null;
+    return r.json().catch(() => null);
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════
+const fmtTime = ms => { const s = Math.floor((ms||0)/1000); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; };
+const STATUS_META = {
+  analyzing:{ label:"Analyse…",       color:"#FFAD60" },
+  searching:{ label:"Suche…",         color:"#FFAD60" },
+  ready:    { label:"Bereit",         color:"#A29BFE" },
+  holding:  { label:"Wartet",         color:"#74B9FF" },
+  queued:   { label:"Eingeplant",     color:"#55EFC4" },
+  notfound: { label:"Nicht gefunden", color:"#FF6B6B" },
+  error:    { label:"Fehler",         color:"#FF6B6B" },
+  duplicate:{ label:"Schon gespielt", color:"#FFAD60" },
+};
+const SOURCE_META = {
+  dj:       { icon:"🎛️", label:"DJ" },
+  rec:      { icon:"🎯", label:"KI" },
+  guest:    { icon:"👥", label:"Gast" },
+  playlist: { icon:"📀", label:"Playlist" },
+};
+const UPNEXT_VISIBLE = 5; // sichtbare Plätze in "Als Nächstes"
+// Erfahrungswerte: ab wann darf die nächsthöhere Phase vorgeschlagen werden (Minuten)
+const DEFAULT_MIN_DURATION = { warmup:30, buildup:20, peak:45, cooldown:20, afterhour:0 };
+// Priorität: 0 = sofort, 1 = nächster Song, 2 = normal (Rec/Playlist/DJ-Standardauswahl)
+function insertByPriority(list, newItem) {
+  const startIdx = list.length > 0 && list[0].committed ? 1 : 0;
+  let insertAt = list.length;
+  for (let i = startIdx; i < list.length; i++) {
+    if (list[i].priority > newItem.priority) { insertAt = i; break; }
+  }
+  const arr = [...list];
+  arr.splice(insertAt, 0, newItem);
+  return arr;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════
+function DJController() {
+
+  // ── Auth ──────────────────────────────────────────────────────
+  const [screen, setScreen]         = useState("loading");
+  const [clientId, setClientId]     = useState(() => localStorage.getItem("dj_cid") || "");
+  const [manualToken, setManualToken] = useState("");
+  const [showManual, setShowManual] = useState(false);
+  const [anthropicKey, setAnthropicKey] = useState(() => localStorage.getItem("dj_anthropic_key") || "");
+  const [keyInput, setKeyInput] = useState("");
+  const [token, setToken]           = useState(null);
+
+  // ── DJ Core ───────────────────────────────────────────────────
+  const [phaseIdx, setPhaseIdx]   = useState(0);
+  const [playback, setPlayback]   = useState(null);
+  const [playbackStatus, setPlaybackStatus] = useState("init"); // init | ok | no_device | error
+  const [recs, setRecs]           = useState([]);
+  const [reqInput, setReqInput]   = useState("");
+  const [requests, setRequests]   = useState([]);
+  const [statusMsg, setStatusMsg] = useState("");
+  const [queuedSet, setQueuedSet] = useState(new Set());
+  const [volume, setVolumeState]  = useState(70);
+
+  // ── Track-Einschätzung (ersetzt die alte BPM/Energie-Erkennung) ──
+  const [trackAssessment, setTrackAssessment] = useState(null);
+  const [phaseSuggestion, setPhaseSuggestion] = useState(null);
+  const lastTrackIdRef = useRef(null);
+
+  // ── Erfahrungswerte: Mindestdauer pro Phase, bevor ein Wechsel
+  // zur nächsthöheren Phase vorgeschlagen wird (Party-Schwung-Logik) ──
+  const [minDuration, setMinDuration] = useState(() => {
+    try { return { ...DEFAULT_MIN_DURATION, ...JSON.parse(localStorage.getItem("dj_min_duration") || "{}") }; }
+    catch { return DEFAULT_MIN_DURATION; }
+  });
+  const [phaseStartTime, setPhaseStartTime] = useState(() => Date.now());
+  const [showPhaseSettings, setShowPhaseSettings] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() =>
+    new Date().toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" })
+  );
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" }));
+    }, 10000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => { localStorage.setItem("dj_min_duration", JSON.stringify(minDuration)); }, [minDuration]);
+
+  // ── Phase-Wechsel: Sofort vs. nach aktueller Planung ──────────
+  const [pendingChoice, setPendingChoice]   = useState(null); // Phase-Index, der gerade zur Bestätigung wartet
+  const [scheduledPhase, setScheduledPhase] = useState(null); // { idx, remaining }
+
+  // ── Autopilot: füllt "Als Nächstes" automatisch aus Empfehlungen ──
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
+  const AUTOPILOT_MIN_DEPTH = 3;
+
+  // ── Guest Voting ──────────────────────────────────────────────
+  const [isGuestMode]   = useState(() => { try { return window.location.hash.includes("guest"); } catch { return false; } });
+  const [showQR, setShowQR]             = useState(false);
+  const [guestInput, setGuestInput]     = useState("");
+  const [guestName, setGuestName]       = useState(() => localStorage.getItem("dj_guest_name") || "");
+  const [guestSubmits, setGuestSubmits] = useState([]);
+
+  // ── Firebase Gästesync ────────────────────────────────────────────────────
+  const [firebaseUrl, setFirebaseUrl] = useState(() => {
+    // Gäste bekommen die Firebase-URL via ?fb= Parameter im QR-Link
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const fbFromUrl = params.get("fb");
+      if (fbFromUrl) return decodeURIComponent(fbFromUrl);
+    } catch {}
+    // DJ liest aus localStorage
+    return localStorage.getItem("dj_firebase_url") || "";
+  });
+  const [fbInput, setFbInput]         = useState("");
+  const fbRef = useRef(null);
+
+  useEffect(() => {
+    fbRef.current = firebaseUrl ? firebaseUrl.replace(/\/$/, "") : null;
+  }, [firebaseUrl]);
+
+  useEffect(() => {
+    localStorage.setItem("dj_playlist_enabled", String(playlistEnabled));
+  }, [playlistEnabled]);
+
+  function saveFbUrl() {
+    const url = fbInput.trim();
+    if (!url) return;
+    localStorage.setItem("dj_firebase_url", url);
+    setFirebaseUrl(url);
+    setFbInput("");
+  }
+  const [djPhase, setDjPhase]           = useState(0);
+  const [guestNowPlaying, setGuestNowPlaying] = useState(null);
+  const seenGuestKeys  = useRef(new Set());
+  const processingReqs = useRef(new Set());
+
+  // ── Setlist ───────────────────────────────────────────────────
+  const [setlist, setSetlist]         = useState([]);
+  const [showSetlist, setShowSetlist]     = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // ── Up Next (app-managed plan, only slot 1 is committed to Spotify) ──
+  const [upNext, setUpNext] = useState([]); // [{id, track, reqId, source, committed, djForced, seqNote}]
+
+  // ── Sequenz-Intelligenz ───────────────────────────────────────
+  const [trackMeta, setTrackMeta]       = useState({}); // uri → {bpm:[min,max], genre, mood}
+  const [seqEnabled, setSeqEnabled]     = useState(true);
+  const [isResequencing, setIsResequencing] = useState(false);
+  const reseqTimerRef    = useRef(null);
+  const isResequencingRef = useRef(false);
+  const upNextRef         = useRef([]); // spiegel für closures
+
+  // ── Playlist Source ───────────────────────────────────────────
+  const [playlistUrl, setPlaylistUrl]         = useState(() => localStorage.getItem("dj_playlist_url") || "");
+  const [playlist, setPlaylist]               = useState(null); // { id, name, total, byPhase }
+  const [playlistEnabled, setPlaylistEnabled] = useState(() => localStorage.getItem("dj_playlist_enabled") === "true");
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [playlistQueued, setPlaylistQueued]   = useState(new Set());
+  const [showPlaylist, setShowPlaylist]       = useState(false);
+  const [expandedPhase, setExpandedPhase]     = useState(null);
+
+  // ── Smart Fade ────────────────────────────────────────────────
+  const [smartFade, setSmartFade] = useState(false);
+  const [fadeSecs, setFadeSecs]   = useState(12);
+  const [isFading, setIsFading]   = useState(false);
+  const originalVolRef = useRef(70);  // pre-fade volume target
+  const fadeRampRef    = useRef(null); // interval for ramp-up
+  const fadeTrackRef   = useRef(null); // last seen track id
+
+  const pollRef   = useRef(null);
+  const statusRef = useRef(null);
+  const api       = token ? sp(token) : null;
+  const phase     = PHASES[phaseIdx];
+
+  // QR-URL enthält Firebase-URL als Parameter, damit Gäste sich nicht einrichten müssen
+  const appUrl = (() => {
+    try {
+      const base = window.location.href.split("?")[0].split("#")[0];
+      const fbParam = firebaseUrl ? `?fb=${encodeURIComponent(firebaseUrl)}` : "";
+      return base + fbParam + "#guest";
+    } catch { return ""; }
+  })();
+
+
+  // ── Playlist: Auto-Laden beim Start wenn URL gespeichert ─────────────────
+  useEffect(() => {
+    if (screen === "dj" && api && playlistUrl && !playlist && !playlistLoading) {
+      loadPlaylist();
+    }
+  }, [screen, token]); // nur bei erstem DJ-Screen-Eintritt
+
+  // ── Auth Bootstrap ────────────────────────────────────────────
+  useEffect(() => {
+    if (isGuestMode) { setScreen("guest"); return; }
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) { window.history.replaceState({}, "", window.location.pathname); exchangeCode(code); return; }
+    const t = localStorage.getItem("dj_token"), exp = parseInt(localStorage.getItem("dj_expiry") || "0");
+    if (t && Date.now() < exp - 60_000) { setToken(t); setScreen("dj"); }
+    else setScreen("setup");
+  }, []);
+
+  async function startAuth() {
+    const cid = clientId.trim(); if (!cid) return;
+    localStorage.setItem("dj_cid", cid);
+    const v = randStr(64), cc = await codeChallenge(v);
+    localStorage.setItem("dj_cv", v);
+    const url = new URL("https://accounts.spotify.com/authorize");
+    url.searchParams.set("client_id", cid); url.searchParams.set("response_type", "code");
+    url.searchParams.set("redirect_uri", redirectUri()); url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("code_challenge", cc); url.searchParams.set("scope", SCOPES);
+    window.location.href = url.toString();
+  }
+
+  async function exchangeCode(code) {
+    const cid = localStorage.getItem("dj_cid"), v = localStorage.getItem("dj_cv");
+    try {
+      const r = await fetch("https://accounts.spotify.com/api/token", {
+        method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id:cid, grant_type:"authorization_code", code, redirect_uri:redirectUri(), code_verifier:v }),
+      });
+      const d = await r.json();
+      if (d.access_token) { storeToken(d.access_token, d.expires_in); setToken(d.access_token); setScreen("dj"); }
+      else setScreen("setup");
+    } catch { setScreen("setup"); }
+  }
+
+  function applyManualToken() { const t = manualToken.trim(); if (!t) return; storeToken(t, 3600); setToken(t); setScreen("dj"); }
+  function saveApiKey() {
+    const k = keyInput.trim(); if (!k) return;
+    localStorage.setItem("dj_anthropic_key", k);
+    setAnthropicKey(k); setKeyInput("");
+  }
+  function clearApiKey() {
+    localStorage.removeItem("dj_anthropic_key");
+    setAnthropicKey("");
+  }
+  function storeToken(t, exp) { localStorage.setItem("dj_token", t); localStorage.setItem("dj_expiry", String(Date.now() + exp * 1000)); }
+  function redirectUri() { return window.location.origin + window.location.pathname; }
+  function logout() {
+    ["dj_token","dj_expiry","dj_cid","dj_cv"].forEach(k => localStorage.removeItem(k));
+    setToken(null); setPlayback(null); setRecs([]); setRequests([]); setScreen("setup");
+  }
+
+  // ── Playback Polling ──────────────────────────────────────────
+  useEffect(() => {
+    if (screen !== "dj" || !api) return;
+    const poll = async () => {
+      try {
+        const pb = await api.get("/me/player");
+        setPlayback(pb);
+        setPlaybackStatus(pb ? "ok" : "no_device");
+      } catch (e) {
+        if (e.status === 401) logout();
+        else setPlaybackStatus("error");
+      }
+    };
+    poll();
+    pollRef.current = setInterval(poll, 3000);
+    return () => clearInterval(pollRef.current);
+  }, [screen, token]);
+
+  // ── Up Next: Position 1 verschieben, sobald sie zu spielen beginnt ──
+  useEffect(() => {
+    if (screen !== "dj" || upNext.length === 0) return;
+    const front = upNext[0];
+    if (front.committed && playback?.item?.id === front.track.id) {
+      setUpNext(prev => prev.slice(1));
+      // Geplanter Phasenwechsel: ein Titel aus der ursprünglichen Planung ist nun gespielt
+      setScheduledPhase(prev => {
+        if (!prev) return prev;
+        const left = prev.remaining - 1;
+        if (left <= 0) { applyPhaseSwitch(prev.idx); return null; }
+        return { ...prev, remaining: left };
+      });
+    }
+  }, [playback?.item?.id, screen]);
+
+  // ── Up Next: neue Position 1 sofort an Spotify übermitteln ──────
+  useEffect(() => {
+    if (screen !== "dj" || !api || upNext.length === 0) return;
+    const front = upNext[0];
+    if (!front.committed) {
+      setUpNext(prev => prev.map((it, i) => i === 0 ? { ...it, committed:true } : it));
+      commitUpNextItem(front);
+    }
+  }, [screen, upNext, token]);
+
+  // ── Sequenz: upNextRef synchron halten ───────────────────────
+  useEffect(() => { upNextRef.current = upNext; }, [upNext]);
+
+  // ── Sequenz: Reorder auslösen wenn freie Queue sich ändert ───
+  useEffect(() => {
+    if (!seqEnabled || screen !== "dj" || isResequencingRef.current) return;
+    const free = upNext.filter(it => !it.committed && !it.djForced);
+    if (free.length < 3) return; // mind. 3 freie Tracks, sonst lohnt sich Resequenzierung nicht
+    clearTimeout(reseqTimerRef.current);
+    reseqTimerRef.current = setTimeout(() => {
+      if (!isResequencingRef.current) resequenceQueue(upNextRef.current);
+    }, 2500); // erhöhter Debounce für Stabilität
+  }, [upNext.map(it => it.id).join(","), seqEnabled, screen]);
+
+  // ── Track-Einschätzung: Claude kommentiert den neuen Track ───────
+  useEffect(() => {
+    if (screen !== "dj" || !playback?.item?.id) return;
+    const trackId = playback.item.id;
+    if (trackId === lastTrackIdRef.current) return;
+    lastTrackIdRef.current = trackId;
+    const np = playback.item;
+    (async () => {
+      try {
+        const aiText = await askClaude(`Kurze Einschätzung (max 8 Wörter Deutsch) wie gut "${np.name}" von ${np.artists.map(a=>a.name).join(", ")} zur Party-Phase "${phase.name}" (${phase.desc}) passt. Bei schlechtem Fit nutze eines dieser Wörter: "zu ruhig", "zu laut", "zu langsam", "zu schnell", "passt nicht". Nur der Satz, keine Anführungszeichen, kein Markdown.`, 60);
+        setTrackAssessment(aiText || null);
+      } catch { setTrackAssessment(null); }
+    })();
+  }, [playback?.item?.id, screen]);
+
+  // ── Playlist Auto-Queue — nur phasengenaue Tracks (Prio 2) ───────────────────
+  // Kein phasenübergreifender Fallback: wenn aktuelle Phase keine Kandidaten hat,
+  // gibt die Playlist ab und der Autopilot (Prio 3) übernimmt falls aktiviert.
+  useEffect(() => {
+    if (screen !== "dj" || !api || !playlistEnabled || !playlist || !playback?.item?.id) return;
+
+    const candidates = (playlist.byPhase[phase.id] || []).filter(t => !queuedSet.has(t.uri));
+    if (candidates.length === 0) return; // → Autopilot übernimmt falls aktiv
+
+    const pick = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))];
+    queueTrack(pick, null, "playlist", 1).then(result => {
+      setPlaylistQueued(prev => new Set([...prev, pick.uri]));
+      if (result === true) flash(`📀  "${pick.name}" aus Playlist eingereiht`, 3000);
+    });
+  }, [playback?.item?.id, screen, playlistEnabled, playlist]);
+
+  // ── Phasenvorschlag: rein zeitbasiert über die Erfahrungswerte ───
+  // (Party-Schwung: nie rückwärts, kein BPM-Datenzugriff mehr nötig)
+  useEffect(() => {
+    if (screen !== "dj") return;
+    const check = () => {
+      const nextIdx = phaseIdx + 1;
+      if (nextIdx >= PHASES.length) { setPhaseSuggestion(null); return; }
+      const elapsedMin = (Date.now() - phaseStartTime) / 60000;
+      const minNeeded  = minDuration[PHASES[phaseIdx].id] ?? 0;
+      setPhaseSuggestion(elapsedMin >= minNeeded ? nextIdx : null);
+    };
+    check();
+    const iv = setInterval(check, 30000);
+    return () => clearInterval(iv);
+  }, [screen, phaseIdx, phaseStartTime, minDuration]);
+
+  // ── Sync phase + Now Playing → shared storage (für Gäste) ────
+  useEffect(() => {
+    if (screen !== "dj") return;
+    store.set("dj-phase", String(phaseIdx), true);
+  }, [phaseIdx, screen]);
+
+  useEffect(() => {
+    if (screen !== "dj" || !playback?.item) return;
+    const np = playback.item;
+    store.set("dj-nowplaying", JSON.stringify({
+      name: np.name,
+      artist: np.artists.map(a => a.name).join(", "),
+      art: np.album?.images?.[1]?.url || np.album?.images?.[0]?.url || null,
+    }), true);
+  }, [playback?.item?.id, screen]);
+
+  // ── Firebase: DJ → phase + nowplaying sync ─────────────────────────────────
+  useEffect(() => {
+    if (!fbRef.current || screen !== "dj") return;
+    fetch(`${fbRef.current}/dj-state/current.json`, {
+      method:"PUT", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ phaseIdx })
+    }).catch(() => {});
+  }, [phaseIdx, screen, firebaseUrl]);
+
+  useEffect(() => {
+    if (!fbRef.current || screen !== "dj" || !playback?.item) return;
+    const np = playback.item;
+    fetch(`${fbRef.current}/dj-state/nowplaying.json`, {
+      method:"PUT", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ name:np.name, artist:np.artists.map(a=>a.name).join(", "), art:np.album?.images?.[1]?.url||null })
+    }).catch(() => {});
+  }, [playback?.item?.id, screen, firebaseUrl]);
+
+  // ── Firebase: DJ liest Gästewünsche via Polling (zuverlässiger als SSE) ─────
+  useEffect(() => {
+    if (!fbRef.current || screen !== "dj") return;
+    // seenGuestKeys.current ist persistenter Ref — keine Duplikate bei Effect-Neustart
+    const fetchRequests = async () => {
+      try {
+        const res = await fetch(`${fbRef.current}/guest-requests.json`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || typeof data !== "object") return;
+        Object.entries(data).forEach(([key, req]) => {
+          if (!req || seenGuestKeys.current.has(key)) return;
+          seenGuestKeys.current.add(key);
+          const id = `guest-fb-${key}`;
+          setRequests(prev => {
+            if (prev.find(r => r.id === id)) return prev;
+            // Gleicher Wunsch-Text bereits vorhanden → Duplikat ignorieren
+            if (prev.find(r => r.isGuest && r.input.trim().toLowerCase() === req.input.trim().toLowerCase())) return prev;
+            return [{ id, input:req.input, status:"analyzing", track:null,
+              note:`👥 ${req.guestName || "Gast"}`, isGuest:true }, ...prev.slice(0,19)];
+          });
+        });
+      } catch (e) { console.warn("Firebase guest-requests fetch:", e); }
+    };
+
+    fetchRequests(); // sofort beim Start
+    const iv = setInterval(fetchRequests, 8000); // alle 8 Sekunden
+    return () => clearInterval(iv);
+  }, [screen, firebaseUrl]);
+
+  // ── Firebase: Gast liest DJ-Phase + NowPlaying via Polling ─────────────────
+  useEffect(() => {
+    if (!fbRef.current || screen !== "guest") return;
+
+    const fetchState = async () => {
+      try {
+        const res = await fetch(`${fbRef.current}/dj-state.json`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data) return;
+        if (data.current?.phaseIdx !== undefined) setDjPhase(data.current.phaseIdx);
+        if (data.nowplaying) setGuestNowPlaying(data.nowplaying);
+      } catch {}
+    };
+
+    fetchState();
+    const iv = setInterval(fetchState, 6000);
+    return () => clearInterval(iv);
+  }, [screen, firebaseUrl]);
+
+  // ── Auto-process incoming guest requests ──────────────────────
+  useEffect(() => {
+    if (screen !== "dj") return;
+    requests.filter(r => r.isGuest && r.status === "analyzing" && !processingReqs.current.has(r.id)).forEach(r => {
+      processingReqs.current.add(r.id);
+      processRequest(r.input, r.id, true);
+    });
+  }, [requests, screen]);
+
+  // ── Auto-queue requests that turned "ready" (e.g. held → phase matched) ────
+  useEffect(() => {
+    if (screen !== "dj" || !api) return;
+    requests.filter(r =>
+      r.status === "ready" && r.track &&
+      !queuedSet.has(r.track.uri) &&
+      !processingReqs.current.has(`autoq-${r.id}`)
+    ).forEach(r => {
+      processingReqs.current.add(`autoq-${r.id}`);
+      queueTrack(r.track, r.id, r.isGuest ? "guest" : "dj", 0, false, false)
+        .then(() => flash(`✅  "${r.track.name}" jetzt eingereiht`));
+    });
+  }, [requests, screen]);
+
+  // ── Smart Fade: monitor track progress ───────────────────────
+  useEffect(() => {
+    if (!smartFade || !playback?.item || !api) return;
+    const { id, duration_ms } = playback.item;
+    const remaining  = duration_ms - playback.progress_ms;
+    const threshold  = fadeSecs * 1000;
+
+    // ── New track detected → ramp volume back up ──────────────
+    if (id !== fadeTrackRef.current) {
+      fadeTrackRef.current = id;
+      if (isFading) {
+        setIsFading(false);
+        const target = originalVolRef.current;
+        let cur = volume;
+        clearInterval(fadeRampRef.current);
+        fadeRampRef.current = setInterval(() => {
+          cur = Math.min(target, cur + 5);
+          setVolumeState(cur);
+          api.put(`/me/player/volume?volume_percent=${cur}`);
+          if (cur >= target) clearInterval(fadeRampRef.current);
+        }, 350);
+      }
+      return;
+    }
+
+    if (!playback.is_playing) return;
+
+    if (remaining > threshold) {
+      // Outside fade zone — keep logging current vol as baseline
+      if (!isFading) originalVolRef.current = volume;
+    } else if (remaining > 200) {
+      // Inside fade zone — scale volume from 100 % → 0 %
+      if (!isFading) setIsFading(true);
+      const ratio  = remaining / threshold;            // 1.0 → ~0
+      const target = Math.max(0, Math.round(originalVolRef.current * ratio));
+      setVolumeState(target);
+      api.put(`/me/player/volume?volume_percent=${target}`);
+    }
+  }, [playback, smartFade, fadeSecs]);
+
+  // ── Smart Fade: restore immediately when toggled off ─────────
+  useEffect(() => {
+    if (!smartFade && isFading) {
+      setIsFading(false);
+      clearInterval(fadeRampRef.current);
+      const target = originalVolRef.current;
+      setVolumeState(target);
+      api?.put(`/me/player/volume?volume_percent=${target}`);
+    }
+  }, [smartFade]);
+
+  // ── Phase switch ──────────────────────────────────────────────
+  // Wendet den Phasenwechsel tatsächlich an — bereinigt die Queue automatisch
+  function applyPhaseSwitch(idx) {
+    setPhaseIdx(idx); setPhaseSuggestion(null);
+    setPhaseStartTime(Date.now());
+
+    const newPhase = PHASES[idx];
+
+    // ── Automatisches Aussortieren: Tracks ohne BPM-Fit zur neuen Phase ───────
+    // Nutzt upNextRef.current (kein stale closure), kein Claude-Call nötig
+    const toRemove = (upNextRef.current || []).filter(item => {
+      if (item.committed || item.djForced) return false; // gesperrte/gepinnte nie anfassen
+      const meta = trackMeta[item.track.uri];
+      if (!meta?.bpm) return false; // kein BPM bekannt → im Zweifel behalten
+      return !(meta.bpm[1] >= newPhase.bpmMin && meta.bpm[0] <= newPhase.bpmMax);
+    });
+
+    if (toRemove.length > 0) {
+      const removeUris = new Set(toRemove.map(it => it.track.uri));
+      // Aus Queue entfernen
+      setUpNext(prev => prev.filter(it =>
+        it.committed || it.djForced || !removeUris.has(it.track.uri)
+      ));
+      // Aus queuedSet freigeben → Tracks können später wieder gespielt werden
+      setQueuedSet(prev => {
+        const n = new Set(prev);
+        removeUris.forEach(u => n.delete(u));
+        return n;
+      });
+    }
+
+    // Held requests für neue Phase promoten
+    setRequests(prev => prev.map(r =>
+      r.status === "holding" && r.holdPhase === PHASES[idx].id
+        ? { ...r, status:"ready", note:"🎯 Passt zur Phase — wird eingereiht" } : r
+    ));
+
+    const removedMsg = toRemove.length > 0
+      ? ` · ${toRemove.length} nicht passende${toRemove.length === 1 ? "r Track" : " Tracks"} entfernt`
+      : "";
+    flash(`${newPhase.emoji}  ${newPhase.name}${removedMsg}`, 5000);
+    // Resequenzierung erst mit Verzögerung, damit kein Claude-Call-Cascade entsteht
+    clearTimeout(reseqTimerRef.current);
+    reseqTimerRef.current = setTimeout(() => {
+      if (!isResequencingRef.current) resequenceQueue(upNextRef.current);
+    }, 2000); // längere Verzögerung für Stabilität
+  }
+
+  // "Sofort": wechselt jetzt, verwirft noch nicht übermittelte Planung,
+  // und reiht sofort einen ersten Titel der neuen Phase ein damit Skip funktioniert.
+  function switchPhaseNow(idx) {
+    setUpNext(prev => prev.filter(it => it.committed));
+    setScheduledPhase(null);
+    setPendingChoice(null);
+    applyPhaseSwitch(idx);
+    // Sofort ersten Titel der neuen Phase laden — damit Skip nach Phasenwechsel funktioniert
+    if (api) {
+      const newPhase = PHASES[idx];
+      setTimeout(async () => {
+        try {
+          // Aus Empfehlungen oder Playlist einen passenden Track suchen und einreihen
+          const candidates = recs.filter(t => !queuedSet.has(t.uri));
+          if (candidates.length > 0) {
+            await queueTrack(candidates[0], null, "rec", 0);
+            flash(`${newPhase.emoji}  Erster Track für ${newPhase.name} eingereiht`, 3000);
+          } else if (playlist?.byPhase?.[newPhase.id]?.length > 0) {
+            const pick = playlist.byPhase[newPhase.id].find(t => !playlistQueued.has(t.uri));
+            if (pick) {
+              await queueTrack(pick, null, "playlist", 0);
+              flash(`${newPhase.emoji}  Erster Track für ${newPhase.name} eingereiht`, 3000);
+            }
+          }
+        } catch {}
+      }, 300);
+    }
+  }
+
+  // "Nach den 5 Titeln": aktuelle Planung läuft komplett aus, erst danach greift die neue Phase.
+  function switchPhaseScheduled(idx) {
+    const remaining = upNext.length;
+    setPendingChoice(null);
+    if (remaining <= 0) { applyPhaseSwitch(idx); return; }
+    setScheduledPhase({ idx, remaining });
+    flash(`📋  Wechsel zu ${PHASES[idx].name} geplant — nach ${remaining} Titel${remaining === 1 ? "" : "n"}`, 5000);
+  }
+
+  // ── Recs: Claude generiert Suchbegriffe, /search liefert die Treffer ──
+  async function loadRecs(idx) {
+    if (!api) return;
+    const p = PHASES[idx];
+    setRecsLoading(true);
+    try {
+      const aiText = await askClaude(`Du bist Musik-Kenner für einen Party-DJ. Phase: "${p.name}" (${p.desc}, Richtwert ${p.bpmMin}-${p.bpmMax} BPM, Genres: ${p.genres.join(", ")}).
+Schlage 4 konkrete, unterschiedliche Spotify-Suchanfragen vor, die gut zu dieser Phase passende, bekannte Tracks finden (englisch, prägnant, z.B. "deep house chill sunset").
+Schließe grundsätzlich aus: Tracks mit "intro", "interlude", "skit", "speech", "spoken", "narration", "monologue", "meditation", "ambient noise", "sound effect" im Titel oder von Spoken-Word/Hörbuch-Künstlern. Keine Tracks mit gesprochenen Intros oder Spoken-Word-Inhalten.
+Antworte NUR mit JSON-Array (kein Markdown):
+[{"query":"...","note":"kurze Begründung auf Deutsch, max 6 Wörter"}]`, 400);
+      const suggestions = JSON.parse(aiText || "[]");
+
+      const seen = new Set(); const out = [];
+      for (const s of suggestions.slice(0, 4)) {
+        const res = await api.get(`/search?q=${encodeURIComponent(s.query)}&type=track&limit=3`);
+        (res?.tracks?.items || []).forEach(t => {
+          if (!seen.has(t.uri)) { seen.add(t.uri); out.push({ ...t, note: s.note || "" }); }
+        });
+      }
+      setRecs(out);
+      // Nach Phasenwechsel: falls Queue leer, sofort ersten Track einreihen → Skip funktioniert
+      setUpNext(currentQueue => {
+        if (currentQueue.filter(it => !it.committed).length === 0 && out.length > 0) {
+          const pick = out.find(t => !queuedSet.has(t.uri));
+          if (pick) {
+            setTimeout(() => queueTrack(pick, null, "rec", 0), 100);
+          }
+        }
+        return currentQueue;
+      });
+    } catch (e) { console.error(e); }
+    finally { setRecsLoading(false); }
+  }
+  useEffect(() => { if (screen === "dj" && api) loadRecs(phaseIdx); }, [screen, phaseIdx]);
+
+  // ── Autopilot (Prio 3): greift nur ein wenn Playlist keine Kandidaten für aktuelle Phase hat ──
+  useEffect(() => {
+    if (screen !== "dj" || !autopilotEnabled || !api) return;
+    if (upNext.length >= AUTOPILOT_MIN_DEPTH) return;
+    // Playlist hat noch Tracks für aktuelle Phase → Autopilot wartet
+    const playlistHasCandidates = playlistEnabled && playlist &&
+      (playlist.byPhase[phase.id] || []).some(t => !queuedSet.has(t.uri));
+    if (playlistHasCandidates) return;
+    // Playlist hat keine Kandidaten mehr → Autopilot füllt mit KI-Empfehlungen
+    const pick = recs.find(t => !queuedSet.has(t.uri) && !upNext.some(it => it.track.uri === t.uri));
+    if (pick) queueTrack(pick, null, "rec", 2);
+  }, [screen, autopilotEnabled, upNext, recs, playlist, playlistEnabled, token]);
+
+  // ── Session-Reset ─────────────────────────────────────────────────────────
+  function resetSession() {
+    setQueuedSet(new Set());
+    setUpNext([]);
+    setSetlist([]);
+    setRequests([]);
+    setPlaylistQueued(new Set());
+    setTrackMeta({});
+    setPhaseSuggestion(null);
+    setPendingChoice(null);
+    setScheduledPhase(null);
+    setPhaseIdx(0);
+    setPhaseStartTime(Date.now());
+    setShowResetConfirm(false);
+    flash("🔄  Session neu gestartet — alle Titel wieder verfügbar, Playlist-Einteilung beibehalten", 5000);
+  }
+
+  // ── Playlist Source: parse + load + score tracks per phase ────
+  function extractPlaylistId(input) {
+    const m = input.match(/playlist[/:]([a-zA-Z0-9]+)/);
+    if (m) return m[1];
+    if (/^[a-zA-Z0-9]{15,30}$/.test(input.trim())) return input.trim();
+    return null;
+  }
+
+  // Claude klassifiziert einen Batch Tracks in Phasen + liefert eine kurze Einschätzung
+  async function classifyTracksBatch(tracks) {
+    const list = tracks.map((t, i) => `${i}: "${t.name}" – ${t.artists.map(a=>a.name).join(", ")}`).join("\n");
+    const aiText = await askClaude(`Du bist Musik-Kenner für einen Party-DJ. Phasen: ${PHASES.map(p=>`${p.id} (${p.desc}, ${p.bpmMin}-${p.bpmMax} BPM)`).join(" | ")}.
+Ordne jeden Track der am besten passenden Phase zu und gib eine kurze Einschätzung (max 5 Wörter Deutsch).
+Schließe grundsätzlich aus: Tracks mit "intro", "interlude", "skit", "speech", "spoken", "narration", "monologue", "meditation", "ambient noise", "sound effect" im Titel oder von Spoken-Word/Hörbuch-Künstlern.
+Für solche Tracks setze phase auf "skip" und note auf "⛔ kein Party-Track".
+Tracks:
+${list}
+Antworte NUR mit JSON-Array, ein Eintrag pro Track in derselben Reihenfolge (kein Markdown):
+[{"phase":"warmup|buildup|peak|cooldown|afterhour|skip","note":"..."}]`, 1800);
+    try { return JSON.parse(aiText || "[]"); } catch { return []; }
+  }
+
+  async function loadPlaylist() {
+    const id = extractPlaylistId(playlistUrl);
+    if (!id || !api) { flash("❌ Playlist-Link oder -ID ungültig"); return; }
+    localStorage.setItem("dj_playlist_url", playlistUrl);
+    setPlaylistLoading(true);
+    try {
+      const meta = await api.get(`/playlists/${id}?fields=name,tracks.total`);
+      let tracks = [], offset = 0;
+      while (true) {
+        const page = await api.get(`/playlists/${id}/tracks?offset=${offset}&limit=100&fields=items(track(id,uri,name,artists,album,duration_ms))`);
+        const items = (page?.items || []).map(it => it.track).filter(t => t && t.id);
+        tracks = tracks.concat(items);
+        if (!page?.items || page.items.length < 100) break;
+        offset += 100;
+        if (offset > 300) break; // Sicherheits-Cap, hält die KI-Klassifizierung im Rahmen
+      }
+
+      flash(`🧠  Claude ordnet ${tracks.length} Tracks den Phasen zu…`, 20000);
+
+      // In Batches von 40 klassifizieren, um den Prompt schlank zu halten
+      const byPhase = {};
+      PHASES.forEach(p => (byPhase[p.id] = []));
+      for (let i = 0; i < tracks.length; i += 40) {
+        const batch = tracks.slice(i, i + 40);
+        const classifications = await classifyTracksBatch(batch);
+        batch.forEach((t, j) => {
+          const c = classifications[j];
+          if (!c?.phase || c.phase === "skip") return; // Intro/Spoken-Word ausschließen
+          const phaseId = byPhase[c.phase] ? c.phase : null;
+          if (phaseId) byPhase[phaseId].push({ ...t, note: c.note || "" });
+        });
+      }
+
+      setPlaylist({ id, name: meta?.name || "Playlist", total: tracks.length, byPhase });
+      setPlaylistQueued(new Set());
+      setPlaylistEnabled(true);
+      setExpandedPhase(PHASES[phaseIdx].id); // aktuelle Phase automatisch aufklappen
+      flash(`✅  "${meta?.name}" geladen — ${tracks.length} Tracks von Claude eingeordnet`, 5000);
+    } catch (e) {
+      console.error(e);
+      flash("❌ Playlist konnte nicht geladen werden");
+    } finally {
+      setPlaylistLoading(false);
+    }
+  }
+
+  function removePlaylist() {
+    setPlaylist(null); setPlaylistEnabled(false); setPlaylistQueued(new Set()); setPlaylistUrl("");
+    localStorage.removeItem("dj_playlist_url");
+  }
+
+  // ── Queue track → fügt zur lokalen "Als Nächstes"-Planung hinzu ──
+  // Spotify selbst erlaubt kein Umsortieren der echten Queue, daher
+  // verwaltet die App eine eigene Liste; nur Position 1 wird tatsächlich
+  // an Spotify übermittelt (siehe Commit-Effect weiter unten).
+  // priority: 0 = sofort (springt vor), 1 = nächster Song, 2 = normal (Standard)
+  async function queueTrack(track, reqId = null, source = "dj", priority = 2, force = false, djForced = false) {
+    if (!api) return false;
+    const isDuplicate = !force && (upNext.some(it => it.track.uri === track.uri) || queuedSet.has(track.uri));
+    if (isDuplicate) {
+      if (reqId) setRequests(prev => prev.map(r => r.id === reqId ? { ...r, status:"duplicate", track, note:`🔁 "${track.name}" lief heute Abend schon` } : r));
+      return "duplicate";
+    }
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setUpNext(prev => insertByPriority(prev, { id, track, reqId, source, priority, committed:false, djForced, seqNote:"" }));
+    setQueuedSet(prev => new Set([...prev, track.uri]));
+    if (reqId) setRequests(prev => prev.map(r => r.id === reqId ? { ...r, status:"queued" } : r));
+    // Level 1: Metadaten asynchron schätzen (kein await — Track erscheint sofort)
+    estimateTrackMeta(track);
+    return true;
+  }
+
+  // ── Tatsächliche Übermittlung an Spotify (nur für Position 1) ───
+  async function commitUpNextItem(item) {
+    try {
+      await api.post(`/me/player/queue?uri=${encodeURIComponent(item.track.uri)}`);
+      setSetlist(prev => [...prev, {
+        n: prev.length + 1,
+        name: item.track.name,
+        artist: item.track.artists.map(a => a.name).join(", "),
+        album: item.track.album?.name || "",
+        phase: PHASES[phaseIdx].name,
+        time: new Date().toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" }),
+        source: item.source,
+      }]);
+      return true;
+    } catch {
+      flash("❌ Kein aktives Gerät – Spotify öffnen und einen Track starten");
+      return false;
+    }
+  }
+
+  // ── Manuelles Umsortieren (nur unter den noch nicht übermittelten Plätzen) ──
+  function moveUpNextItem(idx, dir) {
+    setUpNext(prev => {
+      const j = idx + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      if (prev[idx].committed || prev[j].committed) return prev;
+      const arr = [...prev];
+      [arr[idx], arr[j]] = [arr[j], arr[idx]];
+      return arr;
+    });
+  }
+
+  function removeUpNextItem(idx) {
+    setUpNext(prev => {
+      const item = prev[idx];
+      if (!item || item.committed) return prev;
+      setQueuedSet(q => { const n = new Set(q); n.delete(item.track.uri); return n; });
+      if (item.reqId) setRequests(rs => rs.map(r => r.id === item.reqId ? { ...r, status:"ready" } : r));
+      return prev.filter((_, i) => i !== idx);
+    });
+  }
+
+  // ── Playback controls ─────────────────────────────────────────
+  async function togglePlay() { playback?.is_playing ? await api.put("/me/player/pause") : await api.put("/me/player/play"); }
+  async function skipNext()   { await api.post("/me/player/next"); }
+  async function skipPrev()   { await api.post("/me/player/previous"); }
+  async function applyVolume(v) {
+    setVolumeState(v);
+    if (!isFading) originalVolRef.current = v; // keep baseline in sync when not fading
+    await api.put(`/me/player/volume?volume_percent=${v}`);
+  }
+
+  // ── DJ-Modus starten: bricht Spotify-Kontext, App übernimmt Titelwahl ─────
+  async function startDJMode() {
+    if (!api) return;
+    // Besten verfügbaren Starttitel wählen: upNext > recs > Fehler
+    const firstTrack = upNext.length > 0
+      ? upNext[0].track
+      : recs.length > 0 ? recs[0] : null;
+    if (!firstTrack) {
+      flash("⚠️  Bitte zuerst Empfehlungen laden oder einen Titel einreihen");
+      return;
+    }
+    try {
+      // Spielt den Titel direkt → löscht dabei den Spotify-Playlist-Kontext
+      await api.put("/me/player/play", { uris: [firstTrack.uri] });
+      // Ersten upNext-Slot als committed markieren, da er soeben gestartet wurde
+      if (upNext.length > 0 && upNext[0].track.uri === firstTrack.uri) {
+        setUpNext(prev => prev.map((it, i) => i === 0 ? {...it, committed:true} : it));
+      }
+      flash(`🎛️  DJ-Modus aktiv — "${firstTrack.name}" läuft, App übernimmt die Titelwahl`, 5000);
+    } catch {
+      flash("❌  Kein aktives Spotify-Gerät — Spotify öffnen und einen Track starten");
+    }
+  }
+
+  // ── Flash ─────────────────────────────────────────────────────
+  function flash(msg, ms = 5000) {
+    setStatusMsg(msg); clearTimeout(statusRef.current);
+    statusRef.current = setTimeout(() => setStatusMsg(""), ms);
+  }
+
+  // ── Shared Claude-Call ─────────────────────────────────────────
+  async function askClaude(content, maxTokens = 600) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST",
+      headers: anthropicKey
+        ? { "Content-Type":"application/json", "x-api-key": anthropicKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" }
+        : { "Content-Type":"application/json" },
+      body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:maxTokens, messages:[{ role:"user", content }] }),
+    });
+    const data = await res.json();
+    const text = (data.content?.[0]?.text || "").replace(/```[a-z]*/g, "").replace(/```/g, "").trim();
+    return text;
+  }
+
+  // ── Level 1: Track-Metadaten schätzen ─────────────────────────
+  // Läuft asynchron nach dem Einreihen, befüllt trackMeta-Cache.
+  async function estimateTrackMeta(track) {
+    if (trackMeta[track.uri]) return;
+    try {
+      const text = await askClaude(
+        `Schätze aus deinem Musikwissen für "${track.name}" von ${track.artists.map(a=>a.name).join(", ")}:
+Antworte NUR mit JSON (kein Markdown): {"bpm":[min,max],"genre":"...","mood":"..."}`, 80);
+      const meta = JSON.parse(text);
+      setTrackMeta(prev => ({ ...prev, [track.uri]: meta }));
+    } catch {}
+  }
+
+  // ── Level 3: Freie Queue-Slots von Claude neu ordnen ──────────
+  // Greift auf committed-Einträge und djForced-Pins nie an.
+  // Gästewünsche und KI-Empfehlungen werden gleichwertig behandelt.
+  async function resequenceQueue(currentQueue) {
+    if (isResequencingRef.current) return;
+    const locked = currentQueue.filter(it => it.committed || it.djForced);
+    const free   = currentQueue.filter(it => !it.committed && !it.djForced);
+    if (free.length < 2) return;
+
+    isResequencingRef.current = true;
+    setIsResequencing(true);
+    try {
+      const np = playback?.item;
+      const lastLocked = locked[locked.length - 1];
+      const contextLine = lastLocked
+        ? `Letzter fixer Titel: "${lastLocked.track.name}" (${lastLocked.source === "guest" ? "Gastwunsch" : lastLocked.source})`
+        : np ? `Spielt gerade: "${np.name}" von ${np.artists?.[0]?.name}` : "";
+
+      const list = free.map((it, i) => {
+        const m = trackMeta[it.track.uri];
+        const bpmStr = m?.bpm ? `${m.bpm[0]}–${m.bpm[1]} BPM` : "BPM unbekannt";
+        const srcLabel = { guest:"👥 Gast", playlist:"📀 Playlist", rec:"🎯 KI", dj:"🎛️ DJ" }[it.source] || it.source;
+        return `${i}: "${it.track.name}" – ${it.track.artists.map(a=>a.name).join(", ")} [${bpmStr}, ${m?.genre || "?"}, ${m?.mood || "?"}, ${srcLabel}]`;
+      }).join("\n");
+
+      const text = await askClaude(
+        `Du bist ein erfahrener Party-DJ mit voller Regie über die Songabfolge.
+Phase: ${phase.name} (${phase.desc}, Ziel ${phase.bpmMin}–${phase.bpmMax} BPM)
+${contextLine}
+
+Tracks zum Anordnen – Gästewünsche und KI-Empfehlungen gleichwertig behandeln:
+${list}
+
+Ordne diese Tracks für optimalen Partyfluss:
+- Keine BPM-Sprünge >25 zwischen direkt aufeinanderfolgenden Titeln
+- Genre- und Stimmungskohärenz
+- Spannungsbogen innerhalb der Phase aufbauen
+
+Antworte NUR mit JSON (kein Markdown):
+{"order":[i,j,...],"reasons":{"INDEX":"Begründung max 5 Wörter Deutsch"}}`, 350);
+
+      const parsed = JSON.parse(text);
+      const order   = parsed.order;
+      const reasons = parsed.reasons || {};
+      if (!Array.isArray(order) || order.length !== free.length) return;
+      const reordered = order.map((srcIdx, newPos) => ({
+        ...free[srcIdx],
+        seqNote: reasons[String(newPos)] || reasons[String(srcIdx)] || "",
+      })).filter(Boolean);
+      if (reordered.length !== free.length) return;
+      setUpNext([...locked, ...reordered]);
+    } catch (e) { console.error("resequence", e); }
+    finally { isResequencingRef.current = false; setIsResequencing(false); }
+  }
+
+  // ── Process request (AI + Spotify) ───────────────────────────
+  async function processRequest(input, reqId, isGuest = false) {
+    flash("🤔  Analysiere Wunsch…", 15000);
+    try {
+      const aiText = await askClaude(`Du bist ein erfahrener Party-DJ. Aktuelle Phase: "${phase.name}" (${phase.desc}, BPM ${phase.bpmMin}–${phase.bpmMax}, Energie ${phase.energy[0]}–${phase.energy[1]}).
+Party-Verlauf: ${PHASES.map((p,i)=>i===phaseIdx?`[${p.name}←AKTUELL]`:p.name).join(" → ")}
+Gäste-Wunsch: "${input}"
+Entscheide:
+1. Optimale Spotify-Suchanfrage (englisch wenn nötig)
+2. Timing: "immediate" | "next_song" | "hold"
+3. Falls "hold": welche Phase? (${PHASES.map(p=>p.id).join("|")})
+Schließe grundsätzlich aus: Tracks mit "intro", "interlude", "skit", "speech", "spoken", "narration", "monologue", "meditation", "ambient noise", "sound effect" im Titel oder von Spoken-Word/Hörbuch-Künstlern. Falls der Wunsch explizit solch einen Track meint, suche stattdessen eine tanzbare Version oder einen ähnlichen Künstler ohne Intro.
+Antworte NUR mit JSON (kein Markdown, keine Backticks):
+{"searchQuery":"...","type":"title|mood","timing":"immediate|next_song|hold","holdPhase":null,"note":"DJ-Ansage max 10 Wörter Deutsch"}`, 600);
+      const ai = JSON.parse(aiText || "{}");
+
+      setRequests(prev => prev.map(r => r.id === reqId ? { ...r, status:"searching" } : r));
+      flash(`🔍  Suche "${ai.searchQuery}"…`, 8000);
+
+      const search = await api.get(`/search?q=${encodeURIComponent(ai.searchQuery)}&type=track&limit=5`);
+      const track = search?.tracks?.items?.[0];
+
+      if (!track) {
+        setRequests(prev => prev.map(r => r.id === reqId ? { ...r, status:"notfound", note:"Nicht auf Spotify gefunden" } : r));
+        flash("❌ Kein passender Track gefunden"); return;
+      }
+
+      setRequests(prev => prev.map(r => r.id === reqId ? {
+        ...r, track, note: ai.note || "",
+        holdPhase: ai.holdPhase || null,
+        status: ai.timing === "hold" ? "holding" : "ready",
+      } : r));
+
+      if (ai.timing !== "hold") {
+        const priority = ai.timing === "immediate" ? 0 : 1; // 0 = springt vor, 1 = nach aktuellem Song
+        const result = await queueTrack(track, reqId, isGuest ? "guest" : "dj", priority);
+        if (result === "duplicate") {
+          flash(`🔁  "${track.name}" lief heute Abend schon — trotzdem einplanen möglich`, 6000);
+        } else if (result) {
+          const posHint = ai.timing === "immediate" ? "– sofort als Nächstes" : "– nach dem aktuellen Song";
+          flash(`✅  ${ai.note || `"${track.name}" eingeplant`} ${posHint}`);
+        }
+      } else {
+        const holdName = PHASES.find(p => p.id === ai.holdPhase)?.name || "spätere Phase";
+        flash(`⏳  "${track.name}" wartet auf ${holdName}`);
+      }
+    } catch(e) {
+      console.error(e);
+      setRequests(prev => prev.map(r => r.id === reqId ? { ...r, status:"error", note:"Fehler bei Verarbeitung" } : r));
+      flash("❌ Fehler – bitte erneut versuchen");
+    }
+  }
+
+  // ── DJ: handle manual request ─────────────────────────────────
+  async function handleRequest() {
+    const input = reqInput.trim(); if (!input || !api) return;
+    setReqInput("");
+    const reqId = Date.now();
+    setRequests(prev => [{ id:reqId, input, status:"analyzing", track:null, note:"", isGuest:false }, ...prev.slice(0,19)]);
+    processingReqs.current.add(reqId);
+    await processRequest(input, reqId, false);
+  }
+
+  // ── Guest: submit request ─────────────────────────────────────
+  async function handleGuestSubmit() {
+    const input = guestInput.trim(); if (!input) return;
+    const name  = guestName.trim() || "Gast";
+    localStorage.setItem("dj_guest_name", name);
+    setGuestInput("");
+    const key = `local-${Date.now()}`;
+    setGuestSubmits(prev => [{ id:key, input, status:"sending", guestName:name }, ...prev]);
+    if (!fbRef.current) {
+      setGuestSubmits(prev => prev.map(s => s.id===key ? {...s, status:"no_fb"} : s));
+      return;
+    }
+    try {
+      const res = await fetch(`${fbRef.current}/guest-requests.json`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ input, guestName:name, ts:Date.now() })
+      });
+      setGuestSubmits(prev => prev.map(s => s.id===key ? {...s, status: res.ok ? "delivered" : "error"} : s));
+    } catch {
+      setGuestSubmits(prev => prev.map(s => s.id===key ? {...s, status:"error"} : s));
+    }
+  }
+
+  // ── Export setlist ────────────────────────────────────────────
+  function exportSetlist() {
+    const lines = [
+      "🎛️  Party DJ – Setlist",
+      new Date().toLocaleDateString("de-DE", { weekday:"long", year:"numeric", month:"long", day:"numeric" }),
+      "═".repeat(56), "",
+      ...setlist.map(t =>
+        `${String(t.n).padStart(2,"0")}  ${t.time}  [${t.phase.padEnd(10)}]  ${t.name} – ${t.artist}` +
+        (t.source === "guest" ? "  (👥 Gast)" : t.source === "rec" ? "  (🎯 KI)" : t.source === "playlist" ? "  (📀 Playlist)" : "")
+      ),
+      "", `Total: ${setlist.length} Tracks`,
+    ].join("\n");
+    const blob = new Blob([lines], { type:"text/plain;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), { href:url, download:`setlist_${new Date().toISOString().slice(0,10)}.txt` });
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // RENDER: LOADING
+  // ════════════════════════════════════════════════════════════
+  if (screen === "loading") return (
+    <div style={S.fullCenter}>
+      <div style={{ textAlign:"center", color:"#555" }}>
+        <div style={{ fontSize:48 }}>🎛️</div>
+        <div style={{ marginTop:12, fontFamily:"monospace" }}>init…</div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════════════════════════
+  // RENDER: GUEST MODE — Club/Neon, eigene Identität
+  // ════════════════════════════════════════════════════════════
+  if (screen === "guest") {
+    const gp = PHASES[djPhase] || PHASES[0];
+    return (
+      <div style={{ minHeight:"100vh", background:`radial-gradient(ellipse at top, ${gp.bg} 0%, #050308 65%)`, color:"#F5F3FF", fontFamily:"'Inter',system-ui,sans-serif", paddingBottom:40 }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap');
+          .gst-display { font-family:'Bebas Neue', 'Inter', sans-serif; letter-spacing:0.04em; }
+          @keyframes gst-eq { 0%,100%{height:4px} 50%{height:13px} }
+          .gst-bar { width:3px; background:currentColor; border-radius:1px; animation:gst-eq 0.9s ease-in-out infinite; }
+          @keyframes gst-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+          .gst-live-dot { animation:gst-pulse 1.4s ease-in-out infinite; }
+        `}</style>
+
+        {/* ── Jetzt läuft ───────────────────────────── */}
+        <div style={{ padding:"22px 18px 16px", maxWidth:440, margin:"0 auto" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+            <span className="gst-live-dot" style={{ width:7, height:7, borderRadius:"50%", background:gp.color, flexShrink:0 }} />
+            <span style={{ fontSize:11, color:"#6B6478", letterSpacing:"0.12em", fontWeight:600 }}>JETZT LÄUFT</span>
+          </div>
+          {guestNowPlaying ? (
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:"#0D0A14", border:`1px solid ${gp.color}33`, borderRadius:4 }}>
+              {guestNowPlaying.art
+                ? <img src={guestNowPlaying.art} style={{ width:44, height:44, borderRadius:3, flexShrink:0 }} alt="" />
+                : <div style={{ width:44, height:44, borderRadius:3, background:"#1a1626", flexShrink:0 }} />
+              }
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{guestNowPlaying.name}</div>
+                <div style={{ fontSize:11, color:"#6B6478", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{guestNowPlaying.artist}</div>
+              </div>
+              <div style={{ display:"flex", gap:2, alignItems:"flex-end", height:13, color:gp.color, flexShrink:0 }}>
+                <div className="gst-bar" style={{ animationDelay:"0s" }} />
+                <div className="gst-bar" style={{ animationDelay:"0.2s" }} />
+                <div className="gst-bar" style={{ animationDelay:"0.4s" }} />
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding:"12px 14px", background:"#0D0A14", border:"1px solid #1a1626", borderRadius:4, color:"#544D5E", fontSize:12 }}>
+              Warte auf Wiedergabe…
+            </div>
+          )}
+        </div>
+
+        {/* ── Die Bühne: Wunsch-Eingabe (Fokus) ───────── */}
+        <div style={{ maxWidth:440, margin:"4px auto 0", padding:"0 18px" }}>
+          <div style={{ background:"#0D0A14", border:`2px solid ${gp.color}`, borderRadius:4, padding:22, boxShadow:`0 0 55px ${gp.glow}, inset 0 0 30px ${gp.glow}` }}>
+            <div className="gst-display" style={{ fontSize:19, color:gp.color, marginBottom:14, letterSpacing:"0.06em" }}>DEIN WUNSCH</div>
+            <input
+              value={guestInput} onChange={e => setGuestInput(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && handleGuestSubmit()}
+              placeholder="Songtitel, Künstler oder Stimmung…"
+              style={{ width:"100%", padding:"16px 16px", borderRadius:3, background:"#06040A", border:"1px solid #1a1626", color:"#F5F3FF", fontSize:16, outline:"none", boxSizing:"border-box", marginBottom:12 }}
+            />
+            <div style={{ display:"flex", gap:10 }}>
+              <input
+                value={guestName} onChange={e => setGuestName(e.target.value)}
+                placeholder="Dein Name"
+                style={{ flex:1, padding:"13px 14px", borderRadius:3, background:"#06040A", border:"1px solid #1a1626", color:"#F5F3FF", fontSize:13, outline:"none", boxSizing:"border-box" }}
+              />
+              <button onClick={handleGuestSubmit} className="gst-display" style={{ flexShrink:0, padding:"0 30px", borderRadius:3, border:"none", background:gp.color, color:"#06040A", fontSize:16, letterSpacing:"0.05em", cursor:"pointer", boxShadow:`0 0 25px ${gp.color}88` }}>
+                SENDEN
+              </button>
+            </div>
+            <p style={{ margin:"12px 0 0", fontSize:11, color:"#544D5E" }}>Der DJ prüft und reiht deinen Wunsch zum richtigen Moment ein.</p>
+          </div>
+        </div>
+
+        {/* ── Deine Tickets ──────────────────────────── */}
+        {guestSubmits.length > 0 && (
+          <div style={{ maxWidth:440, margin:"22px auto 0", padding:"0 18px" }}>
+            <div className="gst-display" style={{ fontSize:14, color:"#6B6478", marginBottom:10, letterSpacing:"0.08em" }}>DEINE TICKETS</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {guestSubmits.map(s => {
+                const stColor = s.status==="delivered" ? "#55EFC4" : (s.status==="error"||s.status==="no_fb") ? "#FF6B6B" : "#FFAD60";
+                const stLabel = s.status==="delivered" ? "✓ GESENDET" : s.status==="no_fb" ? "Firebase fehlt" : s.status==="error" ? "FEHLER" : "SENDEN…";
+                return (
+                  <div key={s.id} style={{ position:"relative", background:"#0D0A14", border:"1px solid #1a1626", borderRadius:4 }}>
+                    <div style={{ padding:"12px 16px" }}>
+                      <div style={{ fontSize:14, fontWeight:700 }}>{s.input}</div>
+                      <div style={{ fontSize:11, color:"#544D5E", marginTop:2 }}>von {s.guestName}</div>
+                    </div>
+                    {/* Perforation notches */}
+                    <div style={{ position:"absolute", left:-9, top:"50%", width:18, height:18, borderRadius:"50%", background:gp.bg, transform:"translateY(-50%)" }} />
+                    <div style={{ position:"absolute", right:-9, top:"50%", width:18, height:18, borderRadius:"50%", background:gp.bg, transform:"translateY(-50%)" }} />
+                    <div style={{ borderTop:"1px dashed #2a2436" }} />
+                    <div style={{ padding:"9px 16px", display:"flex", justifyContent:"flex-end" }}>
+                      <span className="gst-display" style={{ fontSize:11, color:stColor, letterSpacing:"0.05em" }}>{stLabel}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // RENDER: SETUP
+  // ════════════════════════════════════════════════════════════
+  if (screen === "setup") {
+    return (
+      <div style={{ ...S.fullCenter, padding:24 }}>
+        <div style={{ maxWidth:460, width:"100%" }}>
+          <div style={{ textAlign:"center", marginBottom:36 }}>
+            <div style={{ fontSize:56 }}>🎛️</div>
+            <h1 style={{ ...S.gradientText("#A29BFE","#FF6B6B"), fontSize:30, fontWeight:900, margin:"8px 0 4px" }}>Party DJ</h1>
+            <p style={{ color:"#555", fontSize:13, margin:0 }}>Powered by Spotify · Claude AI</p>
+          </div>
+          <div style={S.card("#141414","#1a1a1a")}>
+            <div style={S.stepHead("#A29BFE")}>① Spotify Developer App</div>
+            <p style={S.hint}><a href="https://developer.spotify.com/dashboard" target="_blank" style={{ color:"#1DB954" }}>developer.spotify.com/dashboard</a>{" "}→ App erstellen → Redirect URI eintragen:</p>
+            <div style={{ background:"#0a0a0a", borderRadius:8, padding:"10px 14px", fontFamily:"monospace", fontSize:11, color:"#55EFC4", wordBreak:"break-all", marginBottom:8, border:"1px solid #1a1a1a" }}>{redirectUri()}</div>
+            <div style={{ height:20 }} />
+            <div style={S.stepHead("#A29BFE")}>② Client ID eingeben</div>
+            <input value={clientId} onChange={e => setClientId(e.target.value)} onKeyDown={e => e.key==="Enter" && startAuth()} placeholder="32-stellige Client ID" style={S.input} />
+            <button onClick={startAuth} style={S.spotifyBtn}>🎵  Mit Spotify verbinden (PKCE OAuth)</button>
+            <button onClick={() => setShowManual(v => !v)} style={{ background:"none", border:"none", color:"#555", fontSize:12, cursor:"pointer", marginTop:12, textDecoration:"underline" }}>Alternativ: Access Token manuell eingeben</button>
+            {showManual && (
+              <div style={{ marginTop:10 }}>
+                <input value={manualToken} onChange={e => setManualToken(e.target.value)} placeholder="Bearer Token einfügen…" style={{ ...S.input, fontFamily:"monospace", fontSize:11 }} />
+                <button onClick={applyManualToken} style={{ ...S.spotifyBtn, background:"#222", color:"#A29BFE", marginTop:8 }}>Token verwenden</button>
+              </div>
+            )}
+
+            <div style={{ height:24 }} />
+            <div style={{ borderTop:"1px solid #1a1a1a", paddingTop:20 }}>
+              <div style={S.stepHead("#A29BFE")}>③ Eigener Anthropic API-Key (optional)</div>
+              <p style={S.hint}>
+                Ohne Key läuft die KI über dein claude.ai-Konto (Free/Pro-Limit). Mit eigenem Key aus{" "}
+                <a href="https://console.anthropic.com" target="_blank" style={{ color:"#1DB954" }}>console.anthropic.com</a>{" "}
+                zahlst du nur nach Verbrauch (~$0,50–1,50 pro Partyabend) und bist nie limitiert.
+              </p>
+              {anthropicKey ? (
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#0a0a0a", borderRadius:8, border:"1px solid #1a1a1a" }}>
+                  <span style={{ fontSize:12, color:"#55EFC4" }}>✓ Eigener Key aktiv (sk-ant-…{anthropicKey.slice(-4)})</span>
+                  <button onClick={clearApiKey} style={{ background:"none", border:"1px solid #222", color:"#555", padding:"4px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>Entfernen</button>
+                </div>
+              ) : (
+                <div style={{ display:"flex", gap:10 }}>
+                  <input value={keyInput} onChange={e => setKeyInput(e.target.value)} onKeyDown={e => e.key==="Enter" && saveApiKey()} placeholder="sk-ant-…" style={{ ...S.input, fontFamily:"monospace", fontSize:12 }} />
+                  <button onClick={saveApiKey} style={{ ...S.spotifyBtn, width:"auto", flexShrink:0, padding:"0 18px", marginTop:0, background:"#222", color:"#A29BFE" }}>Speichern</button>
+                </div>
+              )}
+              <p style={{ margin:"8px 0 0", fontSize:10, color:"#333", lineHeight:1.4 }}>
+                Hinweis: Funktioniert über den offiziellen Browser-Header von Anthropic. Der Key bleibt nur lokal in deinem Browser gespeichert.
+              </p>
+            </div>
+
+            <div style={{ height:24 }} />
+            <div style={{ borderTop:"1px solid #1a1a1a", paddingTop:20 }}>
+              <div style={S.stepHead("#FFAD60")}>④ Firebase für Gästewünsche (optional)</div>
+              <p style={S.hint}>
+                Kostenlose Echtzeit-Datenbank:{" "}
+                <a href="https://console.firebase.google.com" target="_blank" style={{ color:"#FFAD60" }}>console.firebase.google.com</a>{" "}
+                → Projekt erstellen → Realtime Database → im Testmodus aktivieren → URL kopieren.
+              </p>
+              {firebaseUrl ? (
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#0a0a0a", borderRadius:8, border:"1px solid #1a1a1a" }}>
+                  <span style={{ fontSize:12, color:"#FFAD60" }}>🔥 Firebase verbunden</span>
+                  <button onClick={() => { setFirebaseUrl(""); localStorage.removeItem("dj_firebase_url"); }} style={{ background:"none", border:"1px solid #222", color:"#555", padding:"4px 10px", borderRadius:6, cursor:"pointer", fontSize:11 }}>Entfernen</button>
+                </div>
+              ) : (
+                <div style={{ display:"flex", gap:10 }}>
+                  <input value={fbInput} onChange={e => setFbInput(e.target.value)} onKeyDown={e => e.key==="Enter" && saveFbUrl()} placeholder="https://projekt-default-rtdb.firebaseio.com" style={{ ...S.input, fontFamily:"monospace", fontSize:12 }} />
+                  <button onClick={saveFbUrl} style={{ ...S.spotifyBtn, width:"auto", flexShrink:0, padding:"0 18px", marginTop:0, background:"#1a1000", color:"#FFAD60", border:"1px solid #FFAD6055" }}>Speichern</button>
+                </div>
+              )}
+              <p style={{ margin:"8px 0 0", fontSize:10, color:"#333", lineHeight:1.4 }}>
+                Ohne Firebase läuft alles — nur Gästewünsche per QR-Code werden dann nicht übertragen.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // RENDER: DJ DASHBOARD
+  // ════════════════════════════════════════════════════════════
+  const np       = playback?.item;
+  const progress = np ? (playback.progress_ms / np.duration_ms) * 100 : 0;
+  const albumArt = np?.album?.images?.[0]?.url;
+  const artist   = np?.artists?.map(a => a.name).join(", ") || "";
+  const guestCount = requests.filter(r => r.isGuest).length;
+
+  return (
+    <div style={{ minHeight:"100vh", background:`radial-gradient(ellipse at top, ${phase.bg} 0%, #080808 55%)`, color:"#fff", fontFamily:"'Inter',system-ui,sans-serif", transition:"background 1.2s ease" }}>
+      <style>{`
+        .dj-container { max-width:640px; margin:0 auto; padding:18px 16px 40px; display:flex; flex-direction:column; gap:14px; }
+        .dj-top-row { display:flex; flex-direction:column; gap:14px; }
+        .dj-top-row > div { width:100%; }
+        @media (min-width: 820px) {
+          .dj-container { max-width:920px; }
+          .dj-top-row { flex-direction:row; align-items:stretch; }
+          .dj-top-row > div { flex:1; min-width:0; }
+        }
+      `}</style>
+
+      {/* ── Header ─────────────────────────────────── */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 20px", borderBottom:"1px solid #111", backdropFilter:"blur(8px)", position:"sticky", top:0, zIndex:10, background:"#08080888" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontSize:20 }}>🎛️</span>
+          <span style={{ ...S.gradientText(phase.color,"#fff8"), fontWeight:800, fontSize:17, transition:"all 1s" }}>Party DJ</span>
+          <span style={{ fontSize:11, color:"#333", fontFamily:"monospace" }}>● LIVE</span>
+          <span style={{ fontSize:12, color:"#555", fontFamily:"monospace", marginLeft:4 }}>{currentTime}</span>
+          {anthropicKey && <span title="Eigener Anthropic API-Key aktiv" style={{ fontSize:10, color:"#55EFC4" }}>🔑</span>}
+          {firebaseUrl && <span title="Firebase verbunden" style={{ fontSize:10, color:"#FFAD60" }}>🔥</span>}
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <button onClick={() => setShowSetlist(v => !v)} title="Setlist" style={{ ...S.headerBtn, color: showSetlist ? "#A29BFE" : "#444", borderColor: showSetlist ? "#A29BFE44" : "#222" }}>
+            📋{setlist.length > 0 ? ` ${setlist.length}` : ""}
+          </button>
+          <button onClick={() => setShowPlaylist(v => !v)} title={playlist ? `Playlist: ${playlist.name}` : "Playlist-Quelle"} style={{ ...S.headerBtn, color: showPlaylist ? "#55EFC4" : playlist ? "#55EFC488" : "#444", borderColor: showPlaylist ? "#55EFC444" : playlist ? "#55EFC433" : "#222", position:"relative", maxWidth:120, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            📀{playlist ? ` ${playlist.name.slice(0, 12)}${playlist.name.length > 12 ? "…" : ""}` : ""}{playlistEnabled && <span style={{ position:"absolute", top:-3, right:-3, width:8, height:8, borderRadius:"50%", background:"#55EFC4" }} />}
+          </button>
+          <button onClick={() => setShowQR(v => !v)} title="Gäste einladen" style={{ ...S.headerBtn, color: showQR ? phase.color : "#444", borderColor: showQR ? `${phase.color}44` : "#222", position:"relative" }}>
+            📱{guestCount > 0 && <span style={{ position:"absolute", top:-5, right:-5, background:"#FF6B6B", color:"#fff", borderRadius:"50%", width:16, height:16, fontSize:9, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, lineHeight:1 }}>{guestCount}</span>}
+          </button>
+          <button
+            onClick={() => setShowResetConfirm(v => !v)}
+            title="Session neu starten"
+            style={{ ...S.headerBtn, color: showResetConfirm ? "#FF6B6B" : "#444", borderColor: showResetConfirm ? "#FF6B6B44" : "#222" }}
+          >🔄</button>
+          <button onClick={logout} style={{ ...S.headerBtn, fontSize:11 }}>Logout</button>
+        </div>
+      </div>
+
+      <div className="dj-container">
+
+        {/* ── QR / Gäste-Panel ──────────────────────── */}
+        {showQR && (
+          <div style={{ ...S.card("#111","#1a1a1a") }}>
+            <div style={S.label}>📱  Gäste einladen</div>
+            <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
+              <div style={{ flexShrink:0 }}>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=130x130&bgcolor=111111&color=ffffff&data=${encodeURIComponent(appUrl)}`}
+                  style={{ width:130, height:130, borderRadius:10 }}
+                  alt="QR Code für Gäste"
+                />
+              </div>
+              <div style={{ flex:1 }}>
+                <p style={{ ...S.hint, margin:"0 0 8px" }}>Gäste scannen den QR-Code und senden Musikwünsche direkt – ohne Spotify-Account.</p>
+                <div style={{ fontFamily:"monospace", fontSize:10, color:"#55EFC4", background:"#0a0a0a", padding:"8px 12px", borderRadius:8, wordBreak:"break-all", border:"1px solid #1a1a1a", marginBottom:10 }}>{appUrl}</div>
+                {guestCount > 0
+                  ? <div style={{ padding:"8px 12px", background:"#FFAD6011", borderRadius:8, border:"1px solid #FFAD6033", fontSize:12, color:"#FFAD60" }}>
+                      🎤 {guestCount} Gast-Wunsch{guestCount !== 1 ? "wünsche" : ""} eingegangen
+                    </div>
+                  : <div style={{ fontSize:12, color:"#333" }}>Warte auf Wünsche…</div>
+                }
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Session-Reset Bestätigung ───────────────────────── */}
+        {showResetConfirm && (
+          <div style={{ ...S.card("#111","#FF6B6B44") }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#FF6B6B", marginBottom:8 }}>🔄  Session neu starten?</div>
+            <p style={{ ...S.hint, margin:"0 0 12px", fontSize:12 }}>
+              Setzt zurück: Warteschlange, gespielte Titel, Wunschliste, Setlist, Phase → Warm-up.<br/>
+              <b style={{ color:"#888" }}>Bleibt erhalten:</b> Spotify-Login, API-Key, Playlist-Einteilung (keine neue Klassifizierung nötig).
+            </p>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={resetSession} style={{ flex:1, padding:"9px", borderRadius:8, border:"none", background:"#FF6B6B", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer" }}>
+                Ja, neu starten
+              </button>
+              <button onClick={() => setShowResetConfirm(false)} style={{ flex:1, padding:"9px", borderRadius:8, border:"1px solid #222", background:"none", color:"#555", fontSize:13, cursor:"pointer" }}>
+                Abbrechen
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Playlist Source Panel ──────────────────── */}
+        {showPlaylist && (
+          <div style={{ ...S.card("#111", playlistEnabled ? "#55EFC433" : "#1a1a1a"), transition:"border-color 1s" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+              <div style={S.label}>📀  Playlist als Quelle</div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:10, color: playlistEnabled ? "#55EFC4" : "#444", fontWeight:600 }}>
+                  {playlistEnabled ? "Aktiv" : "Inaktiv"}
+                </span>
+                <div onClick={() => setPlaylistEnabled(v => !v)} style={{ width:48, height:26, borderRadius:13, background: playlistEnabled ? "#55EFC4" : "#1a1a1a", cursor:"pointer", position:"relative", flexShrink:0, transition:"background 0.4s", border:"1px solid #2a2a2a" }}>
+                  <div style={{ position:"absolute", top:3, left: playlistEnabled ? 25 : 3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left 0.35s", boxShadow:"0 1px 4px #0008" }} />
+                </div>
+              </div>
+            </div>
+
+            {!playlist ? (
+              <>
+                <p style={{ ...S.hint, margin:"0 0 10px" }}>
+                  Spotify-Playlist-Link oder ID einfügen. Claude klassifiziert jeden Track und ordnet ihn automatisch der passenden Party-Phase zu.
+                </p>
+                {playlistUrl && !playlist && (
+                  <div style={{ marginBottom:10, padding:"10px 14px", background:"#55EFC411", borderRadius:8, border:"1px solid #55EFC444", fontSize:12 }}>
+                    <div style={{ color:"#55EFC4", fontWeight:700, marginBottom:4 }}>📀 Playlist neu laden</div>
+                    <div style={{ color:"#888", fontSize:11, marginBottom:8 }}>Nach jedem Seitenstart muss die Klassifizierung einmal neu durchgeführt werden.</div>
+                    <button onClick={loadPlaylist} disabled={playlistLoading} style={{ padding:"7px 16px", borderRadius:8, border:"none", background:"#55EFC4", color:"#000", fontWeight:700, fontSize:12, cursor:"pointer", opacity: playlistLoading ? 0.5 : 1 }}>
+                      {playlistLoading ? "Claude klassifiziert…" : "⟳ Jetzt laden"}
+                    </button>
+                  </div>
+                )}
+                <div style={{ display:"flex", gap:10 }}>
+                  <input
+                    value={playlistUrl} onChange={e => setPlaylistUrl(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && loadPlaylist()}
+                    placeholder="https://open.spotify.com/playlist/…"
+                    style={S.input}
+                  />
+                  <button onClick={loadPlaylist} disabled={playlistLoading} style={{ ...S.sendBtn("#55EFC4"), flexShrink:0, padding:"0 18px", fontSize:13, opacity: playlistLoading ? 0.5 : 1 }}>
+                    {playlistLoading ? "…" : "Laden"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Header: Name + Entfernen */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:700 }}>{playlist.name}</div>
+                    <div style={{ fontSize:11, color:"#555", marginTop:2 }}>{playlist.total} Tracks · {Object.values(playlist.byPhase).flat().length} eingeordnet</div>
+                  </div>
+                  <button onClick={removePlaylist} style={{ background:"none", border:"1px solid #222", color:"#555", padding:"5px 10px", borderRadius:8, cursor:"pointer", fontSize:11 }}>Entfernen</button>
+                </div>
+
+                <div style={{ fontSize:11, color: playlistEnabled ? "#55EFC4" : "#555", marginBottom:14 }}>
+                  {playlistEnabled
+                    ? "Aktiv — passende Tracks werden bei jedem Trackwechsel automatisch eingereiht."
+                    : "Inaktiv — Playlist ist geladen, wird aber nicht automatisch genutzt."}
+                </div>
+
+                {/* ── Aktuelle Phase: direkte Track-Liste ─────────────────── */}
+                {(() => {
+                  const currentList = playlist.byPhase[phase.id] || [];
+                  const available   = currentList.filter(t => !playlistQueued.has(t.uri));
+                  const played      = currentList.filter(t =>  playlistQueued.has(t.uri));
+                  return (
+                    <div style={{ marginBottom:14, padding:"12px 14px", background:`${phase.color}0a`, border:`1px solid ${phase.color}33`, borderRadius:10 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                        <span style={{ fontSize:14 }}>{phase.emoji}</span>
+                        <span style={{ fontSize:12, fontWeight:700, color:phase.color, flex:1 }}>{phase.name} — aktuelle Phase</span>
+                        <span style={{ fontSize:10, color:phase.color }}>{available.length} verfügbar · {played.length} gespielt</span>
+                      </div>
+                      {currentList.length === 0 ? (
+                        <div style={{ fontSize:11, color:"#555" }}>Keine Tracks für diese Phase in der Playlist → Fallback auf andere Phasen aktiv</div>
+                      ) : (
+                        <div style={{ display:"flex", flexDirection:"column", gap:5, maxHeight:220, overflowY:"auto" }}>
+                          {currentList.map(t => {
+                            const done = playlistQueued.has(t.uri);
+                            return (
+                              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 8px", borderRadius:6, background:"#0a0a0a", opacity: done ? 0.45 : 1 }}>
+                                <span style={{ fontSize:11, color: done ? "#333" : phase.color, flexShrink:0 }}>{done ? "✓" : "♪"}</span>
+                                <div style={{ flex:1, minWidth:0 }}>
+                                  <div style={{ fontSize:12, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color: done ? "#444" : "#ddd" }}>{t.name}</div>
+                                  <div style={{ fontSize:10, color:"#444", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.artists?.[0]?.name}</div>
+                                </div>
+                                {t.note && <span style={{ fontSize:9, color:"#555", fontStyle:"italic", flexShrink:0, maxWidth:90, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.note}</span>}
+                                {!done && (
+                                  <button onClick={() => { queueTrack(t, null, "playlist", 0); setPlaylistQueued(prev => new Set([...prev, t.uri])); }} style={{ flexShrink:0, padding:"3px 8px", borderRadius:6, border:"none", background:`${phase.color}33`, color:phase.color, fontSize:10, cursor:"pointer" }}>+ Queue</button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ── Andere Phasen: kompakte Übersicht ───────────────────── */}
+                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  <div style={{ fontSize:10, color:"#333", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>Weitere Phasen</div>
+                  {PHASES.filter(p => p.id !== phase.id).map(p => {
+                    const list = playlist.byPhase[p.id] || [];
+                    const isOpen = expandedPhase === p.id;
+                    return (
+                      <div key={p.id} style={{ borderRadius:8, background:"#0a0a0a", border:"1px solid #141414", overflow:"hidden" }}>
+                        <div onClick={() => setExpandedPhase(isOpen ? null : p.id)} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", cursor:"pointer" }}>
+                          <span style={{ fontSize:12 }}>{p.emoji}</span>
+                          <span style={{ fontSize:11, fontWeight:600, flex:1, color:"#888" }}>{p.name}</span>
+                          <span style={{ fontSize:10, padding:"1px 7px", borderRadius:20, background: list.length > 0 ? `${p.color}22` : "#1a1a1a", color: list.length > 0 ? p.color : "#333" }}>{list.length}</span>
+                          <span style={{ fontSize:10, color:"#333" }}>{isOpen ? "▲" : "▼"}</span>
+                        </div>
+                        {isOpen && (
+                          <div style={{ padding:"0 12px 8px", display:"flex", flexDirection:"column", gap:3 }}>
+                            {list.length === 0
+                              ? <div style={{ fontSize:11, color:"#333" }}>Keine Tracks für diese Phase</div>
+                              : list.slice(0, 6).map(t => (
+                                <div key={t.id} style={{ fontSize:11, color: playlistQueued.has(t.uri) ? "#333" : "#666", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                  {playlistQueued.has(t.uri) ? "✓ " : "♪ "}{t.name} – {t.artists?.[0]?.name}
+                                </div>
+                              ))}
+                            {list.length > 6 && <div style={{ fontSize:10, color:"#333" }}>+{list.length - 6} weitere</div>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Setlist Panel ──────────────────────────── */}
+        {showSetlist && (
+          <div style={{ ...S.card("#111","#A29BFE33") }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+              <div style={S.label}>📋  Setlist ({setlist.length} Tracks)</div>
+              {setlist.length > 0 && (
+                <button onClick={exportSetlist} style={{ background:"none", border:"1px solid #A29BFE44", color:"#A29BFE", padding:"5px 14px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+                  ⬇ Export .txt
+                </button>
+              )}
+            </div>
+            {setlist.length === 0
+              ? <div style={{ textAlign:"center", color:"#333", padding:"20px 0", fontSize:13 }}>Noch keine Tracks eingereiht</div>
+              : <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:300, overflowY:"auto" }}>
+                  {[...setlist].reverse().map(t => (
+                    <div key={t.n} style={{ display:"flex", gap:10, padding:"8px 10px", borderRadius:8, background:"#0a0a0a", border:"1px solid #141414", alignItems:"center" }}>
+                      <span style={{ fontFamily:"monospace", fontSize:10, color:"#333", minWidth:22 }}>{t.n}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.name} – {t.artist}</div>
+                        <div style={{ fontSize:10, color:"#444" }}>{t.time} · {t.phase}</div>
+                      </div>
+                      <span style={{ fontSize:11 }}>{t.source==="guest" ? "👥" : t.source==="rec" ? "🎯" : t.source==="playlist" ? "📀" : "🎛️"}</span>
+                    </div>
+                  ))}
+                </div>
+            }
+          </div>
+        )}
+
+        <div className="dj-top-row">
+        {/* ── Phase Selector ────────────────────────── */}
+        <div style={{ ...S.card(`${phase.bg}88`,`${phase.color}22`), transition:"border-color 1s, box-shadow 1s", boxShadow:`0 0 30px ${phase.glow}` }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <div style={S.label}>Party-Phase wechseln</div>
+            <button onClick={() => setShowPhaseSettings(v => !v)} title="Erfahrungswerte einstellen" style={{ background:"none", border:"none", color: showPhaseSettings ? phase.color : "#444", cursor:"pointer", fontSize:13, marginBottom:12 }}>⚙️</button>
+          </div>
+
+          {showPhaseSettings && (
+            <div style={{ marginBottom:14, padding:"12px 14px", background:"#0a0a0a", borderRadius:10, border:"1px solid #1a1a1a" }}>
+              <p style={{ margin:"0 0 10px", fontSize:11, color:"#666", lineHeight:1.5 }}>
+                Mindestdauer, bevor ein Wechsel zur <b style={{ color:"#888" }}>nächsthöheren</b> Phase vorgeschlagen wird. Damit bekommt die Party Schwung statt zu früh wieder gedrosselt zu werden.
+              </p>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {PHASES.slice(0, -1).map(p => (
+                  <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <span style={{ fontSize:12, color:"#888", flex:1 }}>{p.emoji} {p.name}</span>
+                    <input
+                      type="number" min={0} max={180} value={minDuration[p.id] ?? 0}
+                      onChange={e => setMinDuration(prev => ({ ...prev, [p.id]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                      style={{ width:54, padding:"5px 8px", borderRadius:6, background:"#141414", border:"1px solid #222", color:"#fff", fontSize:12, textAlign:"center" }}
+                    />
+                    <span style={{ fontSize:11, color:"#444" }}>Min.</span>
+                    {(() => {
+                      const pIdx = PHASES.findIndex(ph => ph.id === p.id);
+                      if (pIdx < phaseIdx) return <span style={{ fontSize:10, color:"#333", marginLeft:4 }}>✓</span>;
+                      // Kumulativer Zeitpunkt: Startzeit der aktuellen Phase + alle Mindestdauern bis hierhin
+                      let t = phaseStartTime;
+                      for (let i = phaseIdx; i <= pIdx; i++) t += (minDuration[PHASES[i].id] || 0) * 60000;
+                      const switchAt = new Date(t);
+                      const isApprox = pIdx > phaseIdx;
+                      return (
+                        <span style={{ fontSize:10, color: pIdx === phaseIdx ? p.color : "#555", fontFamily:"monospace", marginLeft:4 }} title={isApprox ? "Geschätzt ab aktuellem Zeitplan" : "Exakt"}>
+                          {isApprox ? "≈" : "→"} {switchAt.toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"})}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+            {PHASES.map((p,i) => (
+              <button key={p.id} onClick={() => i !== phaseIdx && setPendingChoice(i)} title={p.tip} style={{
+                flex:1, padding:"10px 2px", borderRadius:10, border: pendingChoice===i ? `2px solid ${p.color}` : "none", cursor:"pointer",
+                background: i===phaseIdx ? p.color : "#141414",
+                color: i===phaseIdx ? "#000" : i<phaseIdx ? `${p.color}88` : "#444",
+                fontWeight: i===phaseIdx ? 800 : 400,
+                fontSize:11, transition:"all 0.35s ease",
+                display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+              }}>
+                <span style={{ fontSize:16 }}>{p.emoji}</span>
+                <span>{p.name.split("-")[0]}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── Sofort / Nach-Plan Bestätigung ────────── */}
+          {pendingChoice !== null && (
+            <div style={{ marginBottom:14, padding:"10px 14px", background:"#0a0a0a", borderRadius:10, border:`1px solid ${PHASES[pendingChoice].color}33` }}>
+              <div style={{ fontSize:12, color:PHASES[pendingChoice].color, fontWeight:700, marginBottom:8 }}>
+                {PHASES[pendingChoice].emoji}  Wechsel zu {PHASES[pendingChoice].name} — wann?
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={() => switchPhaseNow(pendingChoice)} style={{ flex:1, padding:"8px 6px", borderRadius:8, border:"none", background:PHASES[pendingChoice].color, color:"#000", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  ⚡ Sofort
+                </button>
+                <button onClick={() => switchPhaseScheduled(pendingChoice)} style={{ flex:1, padding:"8px 6px", borderRadius:8, border:`1px solid ${PHASES[pendingChoice].color}55`, background:"none", color:PHASES[pendingChoice].color, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  📋 Nach {upNext.length || 0} Titel{upNext.length === 1 ? "" : "n"}
+                </button>
+                <button onClick={() => setPendingChoice(null)} style={{ padding:"8px 10px", borderRadius:8, border:"1px solid #222", background:"none", color:"#555", fontSize:11, cursor:"pointer" }}>✕</button>
+              </div>
+              <p style={{ margin:"8px 0 0", fontSize:10, color:"#444", lineHeight:1.4 }}>
+                Sofort verwirft noch nicht übermittelte Planung (Position 2+). Bereits an Spotify gesendete Titel (🔒) laufen in jedem Fall zu Ende.
+              </p>
+            </div>
+          )}
+
+          {/* ── Geplanter Wechsel läuft noch ────────────── */}
+          {scheduledPhase && (
+            <div style={{ marginBottom:14, padding:"10px 14px", background:"#0a0a0a", borderRadius:10, border:`1px solid ${PHASES[scheduledPhase.idx].color}33`, display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:13 }}>⏳</span>
+              <span style={{ fontSize:12, color:"#888", flex:1 }}>
+                Wechsel zu <b style={{ color:PHASES[scheduledPhase.idx].color }}>{PHASES[scheduledPhase.idx].name}</b> nach noch {scheduledPhase.remaining} Titel{scheduledPhase.remaining===1?"":"n"}
+              </span>
+              <button onClick={() => setScheduledPhase(null)} style={{ padding:"4px 9px", borderRadius:8, border:"1px solid #222", background:"none", color:"#555", fontSize:11, cursor:"pointer" }}>Abbrechen</button>
+            </div>
+          )}
+
+          <div style={{ height:2, background:"#1a1a1a", borderRadius:4, overflow:"hidden", marginBottom:12 }}>
+            <div style={{ height:"100%", width:`${((phaseIdx+0.5)/PHASES.length)*100}%`, background:`linear-gradient(90deg, #FFAD60, ${phase.color})`, borderRadius:4, transition:"width 0.6s ease" }} />
+          </div>
+          <div style={{ fontSize:13, color:"#aaa", lineHeight:1.5 }}>
+            <span style={{ color:phase.color, fontWeight:700 }}>{phase.emoji}  {phase.name}</span>
+            {"  ·  "}{phase.desc}{"  ·  "}
+            <span style={{ fontFamily:"monospace", color:"#555", fontSize:12 }}>{phase.bpmMin}–{phase.bpmMax} BPM</span>
+          </div>
+
+          {/* ── BPM Phase Suggestion (immer aufwärts) ─── */}
+          {phaseSuggestion !== null && (
+            <div style={{ marginTop:12, padding:"10px 14px", background:`${PHASES[phaseSuggestion].color}11`, border:`1px solid ${PHASES[phaseSuggestion].color}33`, borderRadius:10 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:12, color:PHASES[phaseSuggestion].color, fontWeight:700 }}>
+                    {PHASES[phaseSuggestion].emoji}  Bereit für {PHASES[phaseSuggestion].name}?
+                  </div>
+                  <div style={{ fontSize:11, color:"#555", marginTop:3 }}>
+                    {Math.round((Date.now()-phaseStartTime)/60000)} Min. in {phase.name} — Zeit für mehr Schwung
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={() => setPendingChoice(phaseSuggestion)} style={{ padding:"6px 12px", borderRadius:8, border:"none", background:PHASES[phaseSuggestion].color, color:"#000", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                    Wechseln
+                  </button>
+                  <button onClick={() => setPhaseSuggestion(null)} style={{ padding:"6px 10px", borderRadius:8, border:"1px solid #222", background:"none", color:"#555", fontSize:11, cursor:"pointer" }}>✕</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Now Playing ────────────────────────────── */}
+        <div style={{ ...S.card("#111",`${phase.color}18`), transition:"border-color 1s", boxShadow: albumArt ? `0 4px 40px ${phase.glow}` : "none" }}>
+          {/* DJ-Modus-Indikator */}
+          {(() => {
+            const hasContext = playback?.context?.type === "playlist" || playback?.context?.type === "album";
+            if (!hasContext) return null;
+            return (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, padding:"8px 12px", background:"#FFAD6011", border:"1px solid #FFAD6033", borderRadius:8 }}>
+                <div>
+                  <span style={{ fontSize:11, color:"#FFAD60", fontWeight:700 }}>⚠️ Spotify-Playlist aktiv</span>
+                  <div style={{ fontSize:10, color:"#555", marginTop:2 }}>Titelwahl noch durch Spotify — App übernimmt beim nächsten Schritt</div>
+                </div>
+                <button
+                  onClick={startDJMode}
+                  style={{ flexShrink:0, padding:"7px 14px", borderRadius:8, border:"none", background:"#FFAD60", color:"#000", fontSize:11, fontWeight:700, cursor:"pointer", marginLeft:10 }}
+                >
+                  🎛️ DJ-Modus starten
+                </button>
+              </div>
+            );
+          })()}
+          <div style={S.label}>Now Playing</div>
+          {np ? (
+            <>
+              <div style={{ display:"flex", gap:16, alignItems:"center" }}>
+                {albumArt && <img src={albumArt} alt="" style={{ width:76, height:76, borderRadius:10, objectFit:"cover", flexShrink:0, boxShadow:`0 4px 24px ${phase.color}55` }} />}
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontWeight:700, fontSize:16, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", marginBottom:4 }}>{np.name}</div>
+                  <div style={{ color:"#888", fontSize:13, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{artist}</div>
+                  <div style={{ color:"#444", fontSize:11, marginTop:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{np.album.name}</div>
+                  {/* Claude-Einschätzung statt Audio-Feature-Badges */}
+                  {trackAssessment && (() => {
+                    // Mismatch erkennen: negative Schlüsselwörter
+                    const isNegative = /zu ruhig|zu laut|zu langsam|zu schnell|passt nicht|nicht ideal|unpassend|störend|fehl am platz|falsche phase/i.test(trackAssessment);
+                    return (
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:8, padding:"6px 10px", background: isNegative ? "#FF6B6B12" : `${phase.color}12`, borderRadius:8, border:`1px solid ${isNegative ? "#FF6B6B33" : `${phase.color}28`}` }}>
+                        <span style={{ fontSize:11, flexShrink:0 }}>🧠</span>
+                        <span style={{ fontSize:11, color: isNegative ? "#FF6B6B" : phase.color, lineHeight:1.4, flex:1 }}>{trackAssessment}</span>
+                        {isNegative && (
+                          <button
+                            onClick={skipNext}
+                            style={{ flexShrink:0, padding:"4px 10px", borderRadius:6, border:"none", background:"#FF6B6B", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}
+                          >⏭ Überspringen</button>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+              <div style={{ marginTop:16 }}>
+                <div style={{ height:3, background:"#1a1a1a", borderRadius:4, overflow:"hidden", marginBottom:6 }}>
+                  <div style={{ height:"100%", width:`${progress}%`, background:phase.color, borderRadius:4, transition:"width 3s linear" }} />
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#555", fontFamily:"monospace", marginTop:2 }}>
+                  <span title="Bereits gelaufen">{fmtTime(playback.progress_ms)}</span>
+                  <span style={{ color:"#333" }}>–{fmtTime(np.duration_ms - playback.progress_ms)} verbleibend</span>
+                  <span title="Gesamtdauer">{fmtTime(np.duration_ms)}</span>
+                </div>
+              </div>
+
+              {/* ── Übergangs-Vorschau: blendet beim Fade-In synchron ein ─ */}
+              {(() => {
+                const next = upNext.length > 0 ? upNext[0] : null;
+                if (!next || !smartFade) return null;
+                const fadeRatio = isFading ? Math.max(0, 1 - volume / Math.max(1, originalVolRef.current)) : 0;
+                if (fadeRatio <= 0) return null;
+                const nextArt = next.track.album?.images?.[1]?.url || next.track.album?.images?.[0]?.url;
+                const sm = SOURCE_META[next.source] || { icon:"🎵", label:"" };
+                const secLeft = playback && np ? Math.round((np.duration_ms - playback.progress_ms) / 1000) : null;
+                return (
+                  <div style={{ marginTop:14, opacity: fadeRatio, transform:`translateY(${Math.round((1 - fadeRatio) * 12)}px)`, transition:"opacity 2.5s ease, transform 2.5s ease", pointerEvents: fadeRatio > 0.5 ? "auto" : "none" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
+                      <div style={{ flex:1, height:1, background:`linear-gradient(90deg, transparent, ${phase.color}44)` }} />
+                      <span style={{ fontSize:10, color:phase.color, letterSpacing:"0.08em", fontWeight:600, flexShrink:0 }}>
+                        KOMMT ALS NÄCHSTES{secLeft !== null ? ` · in ${secLeft}s` : ""}
+                      </span>
+                      <div style={{ flex:1, height:1, background:`linear-gradient(90deg, ${phase.color}44, transparent)` }} />
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:`${phase.color}0a`, border:`1px solid ${phase.color}33`, borderRadius:10 }}>
+                      {nextArt
+                        ? <img src={nextArt} style={{ width:48, height:48, borderRadius:8, flexShrink:0 }} alt="" />
+                        : <div style={{ width:48, height:48, borderRadius:8, background:"#1a1a1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>🎵</div>
+                      }
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:14, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{next.track.name}</div>
+                        <div style={{ fontSize:11, color:"#888", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{next.track.artists?.map(a => a.name).join(", ")}</div>
+                      </div>
+                      <span style={{ fontSize:10, padding:"3px 8px", borderRadius:20, background:`${phase.color}22`, color:phase.color, flexShrink:0 }}>{sm.icon} {sm.label}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          ) : (
+            <div style={{ textAlign:"center", padding:"24px 0", color:"#333" }}>
+              <div style={{ fontSize:32, marginBottom:10 }}>🔇</div>
+              <div style={{ fontSize:13, marginBottom:8, color: playbackStatus === "error" ? "#FF6B6B" : "#555" }}>
+                {playbackStatus === "error" ? "Spotify API antwortet nicht" :
+                 playbackStatus === "no_device" ? "Kein aktiver Track in Spotify" :
+                 "Verbinde mit Spotify…"}
+              </div>
+              <div style={{ fontSize:11, color:"#444", lineHeight:1.8, textAlign:"left", padding:"0 8px" }}>
+                {playbackStatus === "no_device" && <>
+                  1. Spotify Desktop öffnen<br/>
+                  2. Einen Track starten (Play drücken)<br/>
+                  3. App erkennt ihn innerhalb von 3 Sek.<br/>
+                </>}
+                {playbackStatus === "error" && <>
+                  Mögliche Ursache: Token abgelaufen oder Netzwerkfehler.<br/>
+                  Versuch: Logout → erneut mit Spotify verbinden.<br/>
+                </>}
+              </div>
+              {(() => {
+                const exp = parseInt(localStorage.getItem("dj_expiry") || "0");
+                const minLeft = Math.round((exp - Date.now()) / 60000);
+                if (minLeft < 10 && minLeft > 0) return <div style={{ marginTop:10, fontSize:11, color:"#FFAD60" }}>⚠️ Login läuft in {minLeft} Min. ab</div>;
+                if (minLeft <= 0) return <div style={{ marginTop:10, fontSize:11, color:"#FF6B6B" }}>⚠️ Login abgelaufen — neu einloggen</div>;
+                return null;
+              })()}
+              <button onClick={async () => { try { setPlayback(await api.get("/me/player")); } catch {} }} style={{ marginTop:14, padding:"7px 18px", borderRadius:8, border:"1px solid #222", background:"none", color:"#555", fontSize:11, cursor:"pointer" }}>
+                ↺ Verbindung prüfen
+              </button>
+            </div>
+          )}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:18, marginTop:20 }}>
+            <button onClick={skipPrev} style={S.ctrlBtn()}>⏮</button>
+            <button onClick={togglePlay} style={{ ...S.ctrlBtn(), width:58, height:58, fontSize:22, background:phase.color, color:"#000", boxShadow:`0 4px 24px ${phase.color}66`, transition:"background 1s, box-shadow 1s" }}>
+              {playback?.is_playing ? "⏸" : "▶"}
+            </button>
+            <button onClick={skipNext} style={S.ctrlBtn()}>⏭</button>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:16 }}>
+            <span style={{ fontSize:13, color:"#444" }}>🔈</span>
+            <input type="range" min={0} max={100} value={volume} onChange={e => applyVolume(parseInt(e.target.value))} style={{ flex:1, accentColor:phase.color, cursor:"pointer" }} />
+            <span style={{ fontSize:13, color:"#444" }}>🔊</span>
+            <span style={{ fontFamily:"monospace", fontSize:11, color:"#444", minWidth:28 }}>{volume}%</span>
+          </div>
+        </div>
+        </div>
+
+        {/* ── Up Next ────────────────────────────────── */}
+        <div style={S.card("#111", "#1a1a1a")}>
+          {/* Header: Label + Sequenz-Toggle */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ ...S.label, marginBottom:0 }}>⏭  Als Nächstes{upNext.length > 0 ? ` (${upNext.length})` : ""}</span>
+              {isResequencing && <span style={{ fontSize:10, color:"#A29BFE", animation:"pulse 1s infinite" }}>🧠 sortiert…</span>}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:10, color: seqEnabled ? "#A29BFE" : "#444", fontWeight:600 }}>🎼 Sequenz-KI</span>
+              <div onClick={() => setSeqEnabled(v => !v)} style={{ width:38, height:21, borderRadius:11, background: seqEnabled ? "#A29BFE" : "#1a1a1a", cursor:"pointer", position:"relative", border:"1px solid #2a2a2a" }}>
+                <div style={{ position:"absolute", top:2, left: seqEnabled ? 19 : 2, width:15, height:15, borderRadius:"50%", background:"#fff", transition:"left 0.3s" }} />
+              </div>
+            </div>
+          </div>
+
+          {upNext.length === 0 ? (
+            <div style={{ textAlign:"center", color:"#333", padding:"16px 0", fontSize:13 }}>Noch nichts geplant</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {upNext.slice(0, UPNEXT_VISIBLE).map((item, idx) => {
+                const sm   = SOURCE_META[item.source] || { icon:"🎵", label:item.source };
+                const art  = item.track.album?.images?.[2]?.url || item.track.album?.images?.[0]?.url;
+                const meta = trackMeta[item.track.uri];
+                const lockedAbove = idx > 0 && upNext[idx - 1]?.committed;
+                const pinned = item.committed || item.djForced;
+
+                // Phase-Fit prüfen anhand vorhandener BPM-Schätzung (kein Claude-Call)
+                const phaseMismatch = !pinned && meta?.bpm && (() => {
+                  const bpmOk = meta.bpm[1] >= phase.bpmMin && meta.bpm[0] <= phase.bpmMax;
+                  return !bpmOk;
+                })();
+
+                return (
+                  <div key={item.id} style={{ display:"flex", flexDirection:"column", gap:0, borderRadius:10, background:"#0a0a0a", border:`1px solid ${phaseMismatch ? "#FFAD6044" : pinned ? "#222" : "#141414"}`, overflow:"hidden", opacity: item.committed ? 0.75 : 1 }}>
+                    <div style={{ display:"flex", gap:10, padding:"10px 12px", alignItems:"center" }}>
+                      <span style={{ fontFamily:"monospace", fontSize:11, color:"#333", minWidth:14 }}>{idx + 1}</span>
+                      {art
+                        ? <img src={art} style={{ width:36, height:36, borderRadius:6, flexShrink:0 }} alt="" />
+                        : <div style={{ width:36, height:36, borderRadius:6, background:"#1a1a1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>🎵</div>
+                      }
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.track.name}</div>
+                        <div style={{ fontSize:11, color:"#555", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.track.artists.map(a => a.name).join(", ")}</div>
+                        {/* BPM + Genre Tags */}
+                        {meta && (
+                          <div style={{ display:"flex", gap:5, marginTop:4, flexWrap:"wrap" }}>
+                            {meta.bpm && <span style={{ fontSize:9, padding:"1px 6px", borderRadius:20, background:"#1a1a1a", color: phaseMismatch ? "#FFAD60" : "#666", fontFamily:"monospace" }}>{meta.bpm[0]}–{meta.bpm[1]} BPM</span>}
+                            {meta.genre && <span style={{ fontSize:9, padding:"1px 6px", borderRadius:20, background:"#1a1a1a", color:"#666" }}>{meta.genre}</span>}
+                            {meta.mood && <span style={{ fontSize:9, padding:"1px 6px", borderRadius:20, background:"#1a1a1a", color:"#666" }}>{meta.mood}</span>}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 }}>
+                        {phaseMismatch && (
+                          <span title={`BPM passt nicht zu ${phase.name} (${phase.bpmMin}–${phase.bpmMax})`} style={{ fontSize:9, padding:"2px 7px", borderRadius:20, background:"#FFAD6022", color:"#FFAD60", whiteSpace:"nowrap" }}>⚠️ Phasenmismatch</span>
+                        )}
+                        <span style={{ fontSize:10, padding:"3px 8px", borderRadius:20, background:"#141414", color:"#888", whiteSpace:"nowrap" }}>{sm.icon} {sm.label}</span>
+                        {pinned ? (
+                          <span title={item.committed ? "An Spotify übermittelt" : "Manuell gepinnt (DJ)"} style={{ fontSize:12 }}>{item.committed ? "🔒" : "📌"}</span>
+                        ) : (
+                          <div style={{ display:"flex", gap:4 }}>
+                            <button onClick={() => moveUpNextItem(idx, -1)} disabled={lockedAbove} style={S.reorderBtn(lockedAbove)}>↑</button>
+                            <button onClick={() => moveUpNextItem(idx, 1)} disabled={idx === upNext.length - 1} style={S.reorderBtn(idx === upNext.length - 1)}>↓</button>
+                            <button onClick={() => removeUpNextItem(idx)} style={S.reorderBtn(false)}>✕</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {/* Sequenz-Begründung */}
+                    {item.seqNote && !pinned && (
+                      <div style={{ padding:"5px 12px 7px 58px", fontSize:10, color:"#A29BFE", borderTop:"1px solid #141414" }}>
+                        🧠 {item.seqNote}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <p style={{ margin:"10px 0 0", fontSize:11, color:"#333", lineHeight:1.5 }}>
+            🔒 An Spotify übermittelt  ·  📌 DJ-gepinnt  ·  Freie Slots werden von der Sequenz-KI nach BPM-Fluss, Genre und Stimmung geordnet.
+          </p>
+        </div>
+
+        {/* ── Smart Fade ────────────────────────────── */}
+        <div style={{ ...S.card("#111", smartFade ? `${phase.color}33` : "#1a1a1a"), transition:"border-color 1s" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div>
+              <div style={{ ...S.label, marginBottom:4 }}>🌊  Smart Fade</div>
+              <div style={{ fontSize:12, color: isFading ? phase.color : "#444", transition:"color 1s" }}>
+                {smartFade
+                  ? isFading ? "⬇ Ausblenden läuft…" : `Aktiv — Fade ${fadeSecs} s vor Trackende`
+                  : "App-seitige Lautstärke-Überblendung (optional)"}
+              </div>
+            </div>
+            {/* Toggle */}
+            <div
+              onClick={() => setSmartFade(v => !v)}
+              style={{ width:48, height:26, borderRadius:13, background: smartFade ? phase.color : "#1a1a1a", cursor:"pointer", position:"relative", flexShrink:0, transition:"background 0.4s", border:"1px solid #2a2a2a" }}
+            >
+              <div style={{ position:"absolute", top:3, left: smartFade ? 25 : 3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left 0.35s", boxShadow:"0 1px 4px #0008" }} />
+            </div>
+          </div>
+
+          {smartFade && (
+            <div style={{ marginTop:14 }}>
+              {/* Fade duration slider */}
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                <span style={{ fontSize:11, color:"#555" }}>Fade-Dauer</span>
+                <span style={{ fontSize:11, color:phase.color, fontFamily:"monospace", fontWeight:700, transition:"color 1s" }}>{fadeSecs} s vor Trackende</span>
+              </div>
+              <input
+                type="range" min={5} max={20} value={fadeSecs}
+                onChange={e => setFadeSecs(parseInt(e.target.value))}
+                style={{ width:"100%", accentColor:phase.color, cursor:"pointer" }}
+              />
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, fontSize:10, color:"#2a2a2a" }}>
+                <span>5 s</span><span>12 s (Standard)</span><span>20 s</span>
+              </div>
+
+              {/* Live fade indicator */}
+              {isFading && (
+                <div style={{ marginTop:10, padding:"8px 14px", background:`${phase.color}11`, border:`1px solid ${phase.color}33`, borderRadius:8, display:"flex", alignItems:"center", gap:10 }}>
+                  <span style={{ fontSize:13 }}>⬇</span>
+                  <span style={{ fontSize:12, color:phase.color, flex:1 }}>Lautstärke wird ausgeblendet</span>
+                  <span style={{ fontFamily:"monospace", fontSize:12, color:phase.color, fontWeight:700 }}>{volume} %</span>
+                </div>
+              )}
+
+              {/* Mode hint */}
+              <p style={{ margin:"10px 0 0", fontSize:11, color:"#2e2e2e", lineHeight:1.5 }}>
+                Smart Fade und Spotify Crossfade können <b style={{ color:"#444" }}>kombiniert</b> oder <b style={{ color:"#444" }}>alternativ</b> genutzt werden — aktiviere nur eine Seite für saubere Übergänge.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Music Request ──────────────────────────── */}
+        <div style={S.card("#111","#1a1a1a")}>
+          <div style={S.label}>🎤  Musikwunsch</div>
+          <div style={{ display:"flex", gap:10 }}>
+            <input value={reqInput} onChange={e => setReqInput(e.target.value)} onKeyDown={e => e.key==="Enter" && handleRequest()} placeholder="Songtitel, Künstler oder Stimmungsbeschreibung…" style={S.input} />
+            <button onClick={handleRequest} style={{ ...S.sendBtn(phase.color), flexShrink:0, padding:"0 20px", fontSize:18, transition:"background 1s" }}>↗</button>
+          </div>
+          {statusMsg && (
+            <div style={{ marginTop:10, padding:"10px 14px", background:"#0a0a0a", borderRadius:8, fontSize:13, color:"#ccc", borderLeft:`3px solid ${phase.color}`, transition:"border-color 1s" }}>
+              {statusMsg}
+            </div>
+          )}
+        </div>
+
+        {/* ── Request List ───────────────────────────── */}
+        {requests.length > 0 && (
+          <div style={S.card("#111","#1a1a1a")}>
+            <div style={S.label}>📋  Wunschliste</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {requests.map(req => {
+                const sm = STATUS_META[req.status] || { label:req.status, color:"#666" };
+                const art = req.track?.album?.images?.[2]?.url || req.track?.album?.images?.[0]?.url;
+                return (
+                  <div key={req.id} style={{ display:"flex", gap:12, padding:"11px 12px", borderRadius:10, background:"#0a0a0a", border:`1px solid ${req.isGuest ? "#FFAD6022" : "#141414"}`, alignItems:"center" }}>
+                    {art
+                      ? <img src={art} style={{ width:42, height:42, borderRadius:6, flexShrink:0 }} alt="" />
+                      : <div style={{ width:42, height:42, borderRadius:6, background:"#1a1a1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>{req.isGuest ? "👥" : "🎵"}</div>
+                    }
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {req.track ? `${req.track.name}  ·  ${req.track.artists[0].name}` : req.input}
+                      </div>
+                      <div style={{ fontSize:11, color:"#555", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{req.note || `"${req.input}"`}</div>
+                    </div>
+                    <div style={{ display:"flex", gap:6, alignItems:"center", flexShrink:0 }}>
+                      <span style={{ fontSize:10, padding:"3px 9px", borderRadius:20, background:`${sm.color}22`, color:sm.color, fontWeight:600 }}>{sm.label}</span>
+                      {req.status === "holding" && req.track && (
+                        <button onClick={() => queueTrack(req.track, req.id, req.isGuest ? "guest" : "dj", 0, false, true)} style={{ fontSize:10, padding:"3px 9px", borderRadius:20, border:"1px solid #222", background:"none", color:"#888", cursor:"pointer" }}>Jetzt ↑</button>
+                      )}
+                      {req.status === "duplicate" && req.track && (
+                        <button onClick={() => queueTrack(req.track, req.id, req.isGuest ? "guest" : "dj", 0, true)} style={{ fontSize:10, padding:"3px 9px", borderRadius:20, border:"1px solid #FFAD6044", background:"none", color:"#FFAD60", cursor:"pointer" }}>Trotzdem ↑</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Playlist: Passende Titel zur aktuellen Phase ─────── */}
+        {playlist && (() => {
+          const phaseTracks = playlist.byPhase[phase.id] || [];
+          const available   = phaseTracks.filter(t => !playlistQueued.has(t.uri));
+          const played      = phaseTracks.filter(t =>  playlistQueued.has(t.uri));
+          if (phaseTracks.length === 0) return null;
+          return (
+            <div style={S.card("#111", `${phase.color}22`)}>
+              {/* Header */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600 }}>
+                    📀 {playlist.name}
+                  </div>
+                  <div style={{ fontSize:13, fontWeight:700, color:phase.color, marginTop:3 }}>
+                    {phase.emoji} Passend zu {phase.name}
+                  </div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:11, color:phase.color, fontWeight:600 }}>{available.length} verfügbar</div>
+                  <div style={{ fontSize:10, color:"#333" }}>{played.length} gespielt</div>
+                </div>
+              </div>
+
+              {/* Scrollbare Titelliste */}
+              <div style={{ maxHeight:320, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, paddingRight:4 }}>
+                {phaseTracks.map(t => {
+                  const done = playlistQueued.has(t.uri);
+                  const art  = t.album?.images?.[2]?.url || t.album?.images?.[0]?.url;
+                  return (
+                    <div key={t.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", borderRadius:8, background:"#0a0a0a", border:`1px solid ${done ? "#141414" : "#1a1a1a"}`, opacity: done ? 0.45 : 1 }}>
+                      {art
+                        ? <img src={art} style={{ width:36, height:36, borderRadius:6, flexShrink:0 }} alt="" />
+                        : <div style={{ width:36, height:36, borderRadius:6, background:"#1a1a1a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>🎵</div>
+                      }
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color: done ? "#444" : "#ddd" }}>
+                          {done ? "✓ " : ""}{t.name}
+                        </div>
+                        <div style={{ fontSize:10, color:"#444", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {t.artists?.[0]?.name}{t.note ? ` · ${t.note}` : ""}
+                        </div>
+                      </div>
+                      {!done && (
+                        <button
+                          onClick={() => {
+                            queueTrack(t, null, "playlist", 0);
+                            setPlaylistQueued(prev => new Set([...prev, t.uri]));
+                          }}
+                          style={{ flexShrink:0, padding:"4px 10px", borderRadius:6, border:"none", background:`${phase.color}33`, color:phase.color, fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}
+                        >
+                          + Queue
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Hinweis wenn alle gespielt */}
+              {available.length === 0 && (
+                <div style={{ marginTop:10, fontSize:11, color:"#444", textAlign:"center" }}>
+                  Alle Playlist-Tracks dieser Phase gespielt · Autopilot oder Phasenwechsel empfohlen
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Recommendations ────────────────────────── */}
+        {(recs.length > 0 || recsLoading) && (
+          <div style={{ ...S.card("#111", autopilotEnabled ? "#A29BFE33" : "#1a1a1a"), transition:"border-color 1s" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+              <div style={S.label}>🎯  Empfohlen für {phase.name}</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:10, color: autopilotEnabled ? "#A29BFE" : "#444", fontWeight:600 }}>🤖 Autopilot</span>
+                <div onClick={() => setAutopilotEnabled(v => !v)} style={{ width:38, height:21, borderRadius:11, background: autopilotEnabled ? "#A29BFE" : "#1a1a1a", cursor:"pointer", position:"relative", border:"1px solid #2a2a2a" }}>
+                  <div style={{ position:"absolute", top:2, left: autopilotEnabled ? 19 : 2, width:15, height:15, borderRadius:"50%", background:"#fff", transition:"left 0.3s" }} />
+                </div>
+                <button onClick={() => loadRecs(phaseIdx)} style={{ background:"none", border:"none", color:"#444", cursor:"pointer", fontSize:14 }}>↻</button>
+              </div>
+            </div>
+            {autopilotEnabled && (
+              <p style={{ margin:"-4px 0 12px", fontSize:11, color:"#A29BFE" }}>Füllt „Als Nächstes" automatisch auf, wenn weniger als {AUTOPILOT_MIN_DEPTH} Titel geplant sind.</p>
+            )}
+            {recsLoading && recs.length === 0 ? (
+              <div style={{ textAlign:"center", color:"#444", padding:"16px 0", fontSize:12 }}>🧠 Claude sucht passende Tracks…</div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {recs.filter(track => !queuedSet.has(track.uri)).map(track => {
+                  const art = track.album?.images?.[2]?.url || track.album?.images?.[0]?.url;
+                  const queued = false; // bereits gefiltert
+                  return (
+                    <div key={track.id} style={{ display:"flex", gap:12, padding:"10px 12px", borderRadius:10, background:"#0a0a0a", border:"1px solid #141414", alignItems:"center" }}>
+                      <img src={art} style={{ width:40, height:40, borderRadius:6, flexShrink:0 }} alt="" />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{track.name}</div>
+                        <div style={{ fontSize:11, color:"#555", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{track.artists.map(a => a.name).join(", ")}{track.note ? ` · 🧠 ${track.note}` : ""}</div>
+                      </div>
+                      <button onClick={() => !queued && queueTrack(track, null, "rec", 2)} style={{ padding:"6px 14px", borderRadius:8, border:"none", cursor: queued ? "default" : "pointer", background: queued ? "#141414" : phase.color, color: queued ? "#444" : "#000", fontSize:12, fontWeight:700, flexShrink:0, transition:"background 0.3s" }}>
+                        {queued ? "✓" : "+ Queue"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STYLE HELPERS
+// ═══════════════════════════════════════════════════════════════
+const S = {
+  fullCenter:   { display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"#080808", color:"#fff", fontFamily:"'Inter',system-ui,sans-serif" },
+  card:         (bg, border) => ({ background:bg, borderRadius:16, padding:18, border:`1px solid ${border}` }),
+  label:        { fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:12 },
+  gradientText: (c1,c2) => ({ background:`linear-gradient(135deg, ${c1}, ${c2})`, WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }),
+  input:        { width:"100%", padding:"12px 16px", borderRadius:10, background:"#1a1a1a", border:"1px solid #242424", color:"#fff", fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" },
+  spotifyBtn:   { width:"100%", marginTop:10, padding:"13px", background:"linear-gradient(135deg, #1DB954, #17a048)", border:"none", borderRadius:10, color:"#000", fontWeight:700, fontSize:15, cursor:"pointer" },
+  ctrlBtn:      () => ({ width:46, height:46, borderRadius:"50%", border:"none", background:"#1a1a1a", color:"#fff", fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }),
+  reorderBtn:   (disabled) => ({ width:24, height:24, borderRadius:6, border:"1px solid #222", background:"none", color: disabled ? "#222" : "#888", fontSize:11, cursor: disabled ? "default" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0 }),
+  sendBtn:      (color) => ({ borderRadius:10, border:"none", background:`linear-gradient(135deg, ${color}, ${color}bb)`, color:"#000", fontWeight:800, cursor:"pointer" }),
+  headerBtn:    { background:"none", border:"1px solid #222", color:"#444", padding:"5px 12px", borderRadius:8, cursor:"pointer", fontSize:12, position:"relative" },
+  hint:         { color:"#666", fontSize:13, lineHeight:1.6, margin:"0 0 10px" },
+  stepHead:     (c) => ({ fontSize:13, fontWeight:700, color:c, marginBottom:8 }),
+};
+
+
+    // Bootstrap
+    const _root = ReactDOM.createRoot(document.getElementById("root"));
+    _root.render(React.createElement(DJController));
+  </script>
+</body>
+</html>
